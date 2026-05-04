@@ -1,5 +1,15 @@
 # NVIDIA RTX/DLSS Codex Plugin
 
+[![CI](https://github.com/Cameloo1/nvidia-dev-codex-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Cameloo1/nvidia-dev-codex-plugin/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/Cameloo1/nvidia-dev-codex-plugin?label=version)](https://github.com/Cameloo1/nvidia-dev-codex-plugin/tags)
+![Repo size](https://img.shields.io/github/repo-size/Cameloo1/nvidia-dev-codex-plugin)
+![Last commit](https://img.shields.io/github/last-commit/Cameloo1/nvidia-dev-codex-plugin)
+![Codex](https://img.shields.io/badge/Codex-plugin-6f42c1)
+![MCP](https://img.shields.io/badge/MCP-tools-0a7ea4)
+![NVIDIA](https://img.shields.io/badge/NVIDIA-focused-76b900)
+
+**Not affiliated with, endorsed by, or sponsored by NVIDIA.** NVIDIA, RTX, DLSS, CUDA, Nsight, NVENC, NVDEC, and related names are trademarks or registered trademarks of NVIDIA Corporation.
+
 `nvidia-rtx-dlss` is a release-candidate Codex plugin for NVIDIA-focused content technology work. It helps Codex classify projects, choose the right NVIDIA SDK route, inspect local SDK headers, plan integrations, generate safe scaffolds, validate locally, and prepare release-quality reports without crossing NVIDIA licensing or privacy boundaries.
 
 ## What It Does
@@ -34,7 +44,7 @@
 - `nvidia_known_issues_lookup`
 - `nvidia_license_guard`
 
-## Safety Model
+## Safety, NVIDIA SDK, And Licensing Boundaries
 
 - No NVIDIA SDK downloads.
 - No uploads of source, captures, logs, videos, crash dumps, or SDK files.

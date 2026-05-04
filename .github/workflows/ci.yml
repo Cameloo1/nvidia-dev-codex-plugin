@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate plugin
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Script syntax checks
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path .\scripts -Recurse -File -Filter *.mjs | ForEach-Object {
+            node --check $_.FullName
+          }
+
+      - name: MCP self-test
+        shell: pwsh
+        run: node .\scripts\nvidia-rtx-dlss-mcp.mjs --self-test
+
+      - name: Production-readiness test
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-production-readiness.ps1
