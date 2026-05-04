@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "nvidia-rtx-dlss": {
+      "command": "node",
+      "args": [
+        "./scripts/nvidia-rtx-dlss-mcp.mjs"
+      ],
+      "env": {
+        "NVIDIA_RTX_DLSS_CACHE_TTL_MS": "${NVIDIA_RTX_DLSS_CACHE_TTL_MS}",
+        "NVIDIA_RTX_DLSS_EXTRA_SDK_ROOTS": "${NVIDIA_RTX_DLSS_EXTRA_SDK_ROOTS}"
+      }
+    }
+  }
+}

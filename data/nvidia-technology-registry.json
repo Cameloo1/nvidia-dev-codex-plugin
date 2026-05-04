@@ -1,0 +1,535 @@
+{
+  "schema_version": "0.2.0",
+  "last_verified": "2026-05-04",
+  "policy": {
+    "source_ranking": [
+      "Installed local SDK docs and headers from the user's machine or repo",
+      "Official NVIDIA developer pages, release notes, SDK guides, and official GitHub repositories",
+      "Official engine documentation and NVIDIA engine integration pages",
+      "NVIDIA Developer Forums as dated troubleshooting context only",
+      "Observed project source code and build files as the final arbiter"
+    ],
+    "download_guard": "Never download SDKs or credential-gated assets automatically. Ask the user first and prefer official NVIDIA download pages.",
+    "redistribution_guard": "Do not redistribute NVIDIA SDK binaries or package them unless the user has confirmed license permission."
+  },
+  "sources": [
+    {
+      "id": "nvidia-dlss",
+      "name": "NVIDIA DLSS Developer Page",
+      "url": "https://developer.nvidia.com/rtx/dlss/get-started",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "dlss",
+        "streamline",
+        "unreal",
+        "unity",
+        "reflex"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official NVIDIA DLSS page covering DLSS 4.5, Dynamic Multi Frame Generation, Super Resolution, Frame Generation, Ray Reconstruction, DLAA, Streamline, Unreal, and Unity routes."
+    },
+    {
+      "id": "nvidia-streamline-page",
+      "name": "NVIDIA Streamline Developer Page",
+      "url": "https://developer.nvidia.com/rtx/streamline",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "streamline",
+        "dlss",
+        "reflex",
+        "nis",
+        "nrd"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official Streamline overview and route for integrating NVIDIA and related rendering features."
+    },
+    {
+      "id": "streamline-releases",
+      "name": "NVIDIA-RTX Streamline GitHub Releases",
+      "url": "https://github.com/NVIDIA-RTX/Streamline/releases",
+      "kind": "official_nvidia_github",
+      "technologies": [
+        "streamline",
+        "dlss"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "2.11.1",
+      "summary": "Official Streamline releases. Streamline SDK 2.11.1 was listed on April 21, 2026 with Dynamic Multi Frame Generation Mode."
+    },
+    {
+      "id": "streamline-programming-guide",
+      "name": "Streamline Programming Guide",
+      "url": "https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuide.md",
+      "kind": "official_nvidia_github",
+      "technologies": [
+        "streamline",
+        "dlss"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official Streamline integration, security, plugin loading, distribution, and validation guidance."
+    },
+    {
+      "id": "streamline-dlssg-guide",
+      "name": "Streamline DLSS Frame Generation Programming Guide",
+      "url": "https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md",
+      "kind": "official_nvidia_github",
+      "technologies": [
+        "dlss_frame_generation",
+        "streamline"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official DLSS Frame Generation integration checklist, required inputs, feature state, and present-time behavior."
+    },
+    {
+      "id": "rtx-video-sdk",
+      "name": "RTX Video SDK Getting Started",
+      "url": "https://developer.nvidia.com/rtx-video-sdk/getting-started",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "rtx_video_sdk",
+        "video_super_resolution",
+        "artifact_reduction",
+        "sdr_to_hdr"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "1.1",
+      "summary": "Official RTX Video SDK page. Lists Super Resolution, Artifact Reduction, SDR to HDR, RTX 50 support, native CUDA support, 10-bit video SR, and Windows/API/GPU requirements."
+    },
+    {
+      "id": "video-codec-sdk",
+      "name": "NVIDIA Video Codec SDK",
+      "url": "https://developer.nvidia.com/nvidia-video-codec-sdk",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "video_codec_sdk",
+        "nvenc",
+        "nvdec",
+        "pynvvideocodec",
+        "vulkan_video",
+        "directx_video"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "13.0",
+      "summary": "Official Video Codec SDK page covering NVENC/NVDEC hardware encode/decode, Windows/Linux support, C APIs, wrappers, DirectX, Vulkan Video, PyNvVideoCodec, and Blackwell updates."
+    },
+    {
+      "id": "nvidia-reflex",
+      "name": "NVIDIA Reflex SDK",
+      "url": "https://developer.nvidia.com/reflex",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "reflex",
+        "latency",
+        "streamline"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official Reflex page covering Low Latency mode, Frame Warp, latency markers, Streamline integration, and C++ SDK route."
+    },
+    {
+      "id": "nsight-graphics",
+      "name": "NVIDIA Nsight Graphics",
+      "url": "https://developer.nvidia.com/nsight-graphics",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "nsight_graphics",
+        "debugging",
+        "profiling",
+        "d3d11",
+        "d3d12",
+        "vulkan",
+        "opengl",
+        "openxr"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official Nsight Graphics page for frame debugging, profiling, shader/pixel/event inspection, and graphics capture workflows."
+    },
+    {
+      "id": "nsight-graphics-2025-2",
+      "name": "Nsight Graphics 2025.2 Release Page",
+      "url": "https://developer.nvidia.com/nsight-graphics-2025_2",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "nsight_graphics",
+        "graphics_capture",
+        "vulkan",
+        "d3d12"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official release page describing Graphics Capture features and capture/replay workflows."
+    },
+    {
+      "id": "rtx-kit",
+      "name": "NVIDIA RTX Kit",
+      "url": "https://developer.nvidia.com/rtx-kit/",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "rtx_kit",
+        "neural_shaders",
+        "neural_texture_compression",
+        "mega_geometry",
+        "texture_filtering",
+        "path_tracing"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "Official RTX Kit page covering neural rendering, neural shaders, neural texture compression, texture filtering, texture streaming, mega geometry, path tracing, and character rendering."
+    },
+    {
+      "id": "webgpu-explainer",
+      "name": "WebGPU Explainer",
+      "url": "https://gpuweb.github.io/gpuweb/explainer/",
+      "kind": "official_web_standard_context",
+      "technologies": [
+        "webgpu",
+        "browser_boundary"
+      ],
+      "verified_date": "2026-04-30",
+      "summary": "WebGPU explains browser GPU access through web abstractions and does not promise vendor-specific native SDK exposure."
+    },
+    {
+      "id": "nvidia-optical-flow-sdk",
+      "name": "NVIDIA Optical Flow SDK",
+      "url": "https://developer.nvidia.com/optical-flow-sdk",
+      "kind": "official_nvidia_page",
+      "technologies": [
+        "optical_flow_sdk",
+        "nvofa",
+        "nvoffruc",
+        "frame_rate_up_conversion"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "5.0",
+      "summary": "Official NVIDIA Optical Flow SDK page. Describes NVOFA hardware, real-time interpolation/extrapolation, and NvOFFRUC frame-rate up-conversion for video playback smoothness."
+    },
+    {
+      "id": "nvidia-optical-flow-docs",
+      "name": "NVIDIA Optical Flow SDK 5.0 Documentation",
+      "url": "https://docs.nvidia.com/video-technologies/optical-flow-sdk/index.html",
+      "kind": "official_nvidia_docs",
+      "technologies": [
+        "optical_flow_sdk",
+        "nvofa",
+        "nvoffruc"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "5.0",
+      "summary": "Official Optical Flow SDK 5.0 documentation index with NVOF API, application note, tracker, and FRUC programming guide."
+    },
+    {
+      "id": "nvidia-nvofa-fruc-guide",
+      "name": "NVOFA FRUC Programming Guide",
+      "url": "https://docs.nvidia.com/video-technologies/optical-flow-sdk/nvfruc-programming-guide/index.html",
+      "kind": "official_nvidia_docs",
+      "technologies": [
+        "nvoffruc",
+        "frame_rate_up_conversion",
+        "optical_flow_sdk"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "5.0",
+      "summary": "Official FRUC guide. Explains frame-rate up-conversion by inserting interpolated frames between consecutive frames using NVOFA and CUDA."
+    },
+    {
+      "id": "nvidia-optical-flow-download",
+      "name": "NVIDIA Optical Flow SDK Download Page",
+      "url": "https://developer.nvidia.com/opticalflow/download",
+      "kind": "official_nvidia_download_page",
+      "technologies": [
+        "optical_flow_sdk",
+        "nvoffruc"
+      ],
+      "verified_date": "2026-04-30",
+      "version": "5.0",
+      "summary": "Official Optical Flow SDK download page with OS, driver, CUDA, compiler, CMake, and license-gated download requirements."
+    }
+  ],
+  "technologies": [
+    {
+      "id": "dlss-streamline",
+      "canonical_name": "DLSS through NVIDIA Streamline",
+      "family": "real_time_rendering",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "games",
+        "custom_renderers",
+        "real_time_visualization",
+        "simulation"
+      ],
+      "default_route": true,
+      "not_for": [
+        "arbitrary_decoded_video_enhancement",
+        "generic_video_transcoding",
+        "pure_browser_only_apps"
+      ],
+      "official_sources": [
+        "nvidia-dlss",
+        "nvidia-streamline-page",
+        "streamline-releases",
+        "streamline-programming-guide",
+        "streamline-dlssg-guide"
+      ],
+      "requirements": [
+        "Real-time rendered frames, not arbitrary compressed video frames",
+        "Renderer must provide feature-specific resources such as color, depth, motion vectors, exposure, jitter, camera data, frame index, and reset state where required",
+        "Feature support must be queried through SDK or plugin state for the user's GPU, OS, driver, API, settings, and SDK version",
+        "Use production NVIDIA-signed binaries for shipping where official guidance requires it",
+        "Validate Streamline DLL signatures and use absolute paths when verifying signed modules"
+      ],
+      "validation": [
+        "Confirm feature support before exposing UI",
+        "Validate tagged resources and states",
+        "Use Streamline debug visualization where available",
+        "Confirm frame generation is disabled during pause, loading, menus, resolution changes, and non-gameplay frames",
+        "Validate latency and frame pacing with Reflex and profiling tools",
+        "Verify production/non-watermarked libraries before packaging"
+      ]
+    },
+    {
+      "id": "unreal-dlss-plugin",
+      "canonical_name": "Official NVIDIA DLSS plugin for Unreal Engine",
+      "family": "engine_plugin",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "unreal_games",
+        "simulation",
+        "virtual_production"
+      ],
+      "official_sources": [
+        "nvidia-dlss"
+      ],
+      "requirements": [
+        "Detected Unreal Engine project and engine version",
+        "Match official plugin package to UE version",
+        "Validate plugin placement, project configuration, runtime logs, packaging, and production binaries"
+      ],
+      "validation": [
+        "Inspect .uproject/.uplugin state",
+        "Check configured DLSS/Reflex options",
+        "Validate in editor and packaged builds",
+        "Inspect logs and runtime feature availability"
+      ]
+    },
+    {
+      "id": "unity-hdrp-dlss",
+      "canonical_name": "Unity HDRP DLSS and Reflex route",
+      "family": "engine_plugin",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "unity_games",
+        "unity_visualization"
+      ],
+      "official_sources": [
+        "nvidia-dlss",
+        "nvidia-reflex"
+      ],
+      "requirements": [
+        "Unity HDRP route should be first-class for supported Unity versions",
+        "URP/custom SRP requires advanced render-pipeline inspection before feasibility claims"
+      ],
+      "validation": [
+        "Inspect Packages/manifest.json and HDRP configuration",
+        "Check render pipeline, camera, dynamic resolution, and runtime feature settings",
+        "Use Reflex measurement markers where latency matters"
+      ]
+    },
+    {
+      "id": "optical-flow-fruc",
+      "canonical_name": "NVIDIA Optical Flow SDK / NvOFFRUC frame-rate up-conversion",
+      "family": "video_frame_interpolation",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "media_playback",
+        "video_frame_interpolation",
+        "native_video_players",
+        "game_or_video_fruc",
+        "hybrid_web_native_apps"
+      ],
+      "not_for": [
+        "pure_browser_only_apps_without_native_backend",
+        "dlss_game_frame_generation_substitute",
+        "video_super_resolution_or_sdr_to_hdr"
+      ],
+      "official_sources": [
+        "nvidia-optical-flow-sdk",
+        "nvidia-optical-flow-docs",
+        "nvidia-nvofa-fruc-guide",
+        "nvidia-optical-flow-download"
+      ],
+      "requirements": [
+        "Use for frame-rate up-conversion by generating interpolated frames between consecutive frames; do not confuse with DLSS Frame Generation for rendered game frames.",
+        "Requires NVIDIA Optical Flow SDK / NVOFA access and a native or backend layer; pure browser YouTube pages cannot directly call this SDK.",
+        "Official FRUC docs describe ARGB and NV12 input surface support and DirectX or CUDA application integration paths.",
+        "Official docs list Windows and Linux support with NVIDIA display driver and CUDA/toolchain requirements that must be checked for the installed SDK version.",
+        "For YouTube/browser playback, route through Electron/native companion, native player/plugin, or server-side pipeline rather than browser-only script injection."
+      ],
+      "validation": [
+        "Confirm SDK version, driver, CUDA/toolchain, OS, and NVOFA-capable NVIDIA GPU before implementation.",
+        "Validate input frame format, timing, cadence, and consecutive-frame ordering.",
+        "Compare 60 fps input to 120 fps output for motion artifacts, duplicate frames, judder, and A/V sync.",
+        "Measure end-to-end latency, frame queue depth, dropped frames, and GPU/NVOFA/CUDA utilization.",
+        "For streamed content, validate buffering behavior and avoid violating platform terms or DRM boundaries."
+      ]
+    },
+    {
+      "id": "rtx-video-sdk",
+      "canonical_name": "RTX Video SDK",
+      "family": "media_enhancement",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "media_players",
+        "creative_video_apps",
+        "video_enhancement"
+      ],
+      "not_for": [
+        "game_frame_upscaling",
+        "generic_transcoding_without_enhancement"
+      ],
+      "official_sources": [
+        "rtx-video-sdk"
+      ],
+      "requirements": [
+        "64-bit Windows 10 or newer",
+        "API route such as DX11, DX12, Vulkan, or CUDA",
+        "Supported NVIDIA RTX GPU, with official page listing GeForce RTX 20 series or newer and NVIDIA RTX 1000-class hardware",
+        "Use for Super Resolution, Artifact Reduction, and SDR-to-HDR video enhancement"
+      ],
+      "validation": [
+        "Test Super Resolution, Artifact Reduction, and SDR-to-HDR separately",
+        "Validate 8-bit and 10-bit inputs where relevant",
+        "Validate HDR10 output and display path where used",
+        "Measure real-time playback latency and throughput",
+        "Compare multiple source bitrates and resolutions"
+      ]
+    },
+    {
+      "id": "video-codec-sdk",
+      "canonical_name": "NVIDIA Video Codec SDK, NVENC, and NVDEC",
+      "family": "video_encode_decode",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "encoders",
+        "decoders",
+        "transcoders",
+        "capture",
+        "streaming",
+        "video_dataset_ingestion"
+      ],
+      "official_sources": [
+        "video-codec-sdk"
+      ],
+      "requirements": [
+        "Use NVENC for hardware encode and NVDEC for hardware decode",
+        "Do not claim CUDA cores perform NVENC/NVDEC work; these are dedicated hardware engines",
+        "Check GPU codec support matrix for codec, bit depth, chroma format, and throughput",
+        "Use FFmpeg/GStreamer when the project already depends on those frameworks, or low-level APIs when granular control is required"
+      ],
+      "validation": [
+        "Check codec support on the selected GPU",
+        "Test encode/decode throughput",
+        "Validate profile, level, rate-control mode, color format, bit depth, and latency",
+        "Measure quality with PSNR, SSIM, VMAF, or project-specific metrics",
+        "Validate audio/video sync and zero-copy/GPU-memory claims",
+        "Profile NVENC/NVDEC utilization separately from CUDA/graphics workload"
+      ]
+    },
+    {
+      "id": "reflex",
+      "canonical_name": "NVIDIA Reflex",
+      "family": "latency",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "games",
+        "latency_sensitive_renderers"
+      ],
+      "official_sources": [
+        "nvidia-reflex",
+        "nvidia-streamline-page"
+      ],
+      "requirements": [
+        "Use Reflex for latency-sensitive games and frame generation workflows",
+        "Implement measurement markers for debugging and visualization where appropriate",
+        "Use Streamline route when it fits the project; use Reflex SDK route when Streamline is not suitable"
+      ],
+      "validation": [
+        "Measure click-to-photon or pipeline latency",
+        "Validate frame pacing with and without Frame Generation",
+        "Check CPU/GPU bound scenarios"
+      ]
+    },
+    {
+      "id": "nsight-aftermath",
+      "canonical_name": "Nsight Graphics, Nsight Systems, and Nsight Aftermath",
+      "family": "debugging_profiling",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "debugging",
+        "profiling",
+        "crash_dumps",
+        "gpu_hangs",
+        "rendering_corruption"
+      ],
+      "official_sources": [
+        "nsight-graphics",
+        "nsight-graphics-2025-2"
+      ],
+      "requirements": [
+        "Use frame debugging and Graphics Capture for rendering state and resource inspection",
+        "Use GPU Trace or Nsight Systems for performance and frame pacing analysis",
+        "Use Aftermath-style crash dump planning for D3D12/Vulkan GPU hangs and TDRs"
+      ],
+      "validation": [
+        "Define exact repro scene and capture mode",
+        "Collect frame captures, traces, or crash dumps as appropriate",
+        "Inspect API state, events, objects, resources, shaders, acceleration structures, and GPU timeline"
+      ]
+    },
+    {
+      "id": "rtx-kit",
+      "canonical_name": "NVIDIA RTX Kit and neural rendering technologies",
+      "family": "advanced_rendering_content_pipeline",
+      "status": "implementation_baseline",
+      "content_domains": [
+        "animation",
+        "rendering_tools",
+        "asset_pipelines",
+        "path_tracing",
+        "visualization"
+      ],
+      "official_sources": [
+        "rtx-kit"
+      ],
+      "requirements": [
+        "Treat RTX Kit technologies as renderer/content-pipeline technologies, not DLSS substitutes",
+        "Select individual RTX Kit components based on asset, material, geometry, denoising, path tracing, or character-rendering goals"
+      ],
+      "validation": [
+        "Validate visual quality and performance per component",
+        "Use Nsight for renderer profiling and shader/resource investigation",
+        "Confirm GPU/driver/API requirements from the exact component repository or SDK"
+      ]
+    },
+    {
+      "id": "web-boundary",
+      "canonical_name": "Browser, WebGPU, WebCodecs, and native NVIDIA boundary",
+      "family": "web_boundary",
+      "status": "boundary_rule",
+      "content_domains": [
+        "browser_apps",
+        "electron_apps",
+        "web_players",
+        "server_gpu_pipelines"
+      ],
+      "official_sources": [
+        "webgpu-explainer"
+      ],
+      "requirements": [
+        "Do not claim pure browser apps can directly call native DLSS, RTX Video SDK, or Video Codec SDK APIs unless official web-accessible support exists",
+        "Route pure web apps to WebGPU/WebCodecs/browser-native paths",
+        "Route NVIDIA SDK needs to Electron/native companion, native app/plugin architecture, or server-side NVIDIA GPU pipeline"
+      ],
+      "validation": [
+        "Define browser-only versus native/backend boundary",
+        "Specify IPC, frame sharing, texture sharing, latency, and process lifetime if using a native companion"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "name": "nvidia-rtx-dlss",
+  "version": "1.0.0-rc.1",
+  "description": "Official-source-grounded NVIDIA RTX, DLSS, media, video, renderer, patch planning, assisted implementation, validation automation, and release-readiness tooling for Codex.",
+  "author": {
+    "name": "Cameloo1",
+    "email": "",
+    "url": "https://github.com/Cameloo1"
+  },
+  "homepage": "https://developer.nvidia.com/rtx/dlss/get-started",
+  "repository": "https://github.com/NVIDIA-RTX/Streamline",
+  "license": "MIT",
+  "keywords": [
+    "nvidia",
+    "rtx",
+    "dlss",
+    "streamline",
+    "nvenc",
+    "nvdec",
+    "nsight",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "NVIDIA RTX/DLSS",
+    "shortDescription": "Route, plan, scaffold, validate, and release-check NVIDIA RTX, DLSS, media, video, and renderer integrations.",
+    "longDescription": "A NVIDIA-focused Codex copilot for official-source-grounded project classification, SDK/header discovery, technology routing, compatibility reports, integration plans, validation plans, known issue lookup, licensing/download guards, repo-aware patch planning, assisted implementation scaffolds, local validation automation, registry audits, release readiness, and submission packaging for NVIDIA RTX, DLSS, Streamline, RTX Video SDK, Video Codec SDK, Optical Flow SDK, Reflex, Nsight, RTX Kit, Unreal, Unity, custom renderers, media pipelines, and web/native boundary workflows.",
+    "developerName": "Cameloo1",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Network",
+      "Local Files"
+    ],
+    "websiteURL": "https://developer.nvidia.com/",
+    "privacyPolicyURL": "https://www.nvidia.com/en-us/about-nvidia/privacy-policy/",
+    "termsOfServiceURL": "https://www.nvidia.com/en-us/about-nvidia/legal-info/",
+    "defaultPrompt": [
+      "Classify this repo and choose the right NVIDIA route.",
+      "Plan DLSS/Streamline with required buffers and validation.",
+      "Create a repo-aware NVIDIA patch plan before implementation.",
+      "Generate Phase 3 NVIDIA scaffold files after approval.",
+      "Run local NVIDIA validation automation with artifact gates.",
+      "Inspect local NVIDIA SDK headers before code guidance.",
+      "Audit release readiness before marketplace submission.",
+      "Check whether this media app needs RTX Video or NVENC/NVDEC."
+    ],
+    "brandColor": "#76B900",
+    "composerIcon": "./assets/nvidia-rtx-dlss.svg",
+    "logo": "./assets/nvidia-rtx-dlss.svg"
+  }
+}

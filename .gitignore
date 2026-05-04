@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Local validation/scaffold artifacts.
+_nvidia_phase3_scaffolds/
+_nvidia_phase4_validation/

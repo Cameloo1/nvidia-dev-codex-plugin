@@ -1,0 +1,3 @@
+Streamline failed to load sl.interposer.dll
+DLSS Frame Generation feature unsupported on this driver
+GPU crash device removed Aftermath dump available

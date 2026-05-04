@@ -1,0 +1,10 @@
+{
+  "name": "electron-native-fixture",
+  "private": true,
+  "dependencies": {
+    "electron": "30.0.0"
+  },
+  "scripts": {
+    "start": "electron ."
+  }
+}
