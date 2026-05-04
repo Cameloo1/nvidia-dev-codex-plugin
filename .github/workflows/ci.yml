@@ -42,4 +42,4 @@ jobs:
 
       - name: Production-readiness test
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-production-readiness.ps1
+        run: node .\scripts\tests\test-production-readiness.mjs
