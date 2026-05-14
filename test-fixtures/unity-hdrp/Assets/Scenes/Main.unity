@@ -1,0 +1,9 @@
+%YAML 1.1
+--- !u!1 &1
+GameObject:
+  m_Name: Main Camera
+--- !u!114 &2
+MonoBehaviour:
+  m_Name: HDAdditionalCameraData
+  allowDynamicResolution: 1
+  DLSS: true

@@ -1,0 +1,7 @@
+%YAML 1.1
+--- !u!30 &1
+GraphicsSettings:
+  m_CustomRenderPipeline: {fileID: 11400000, guid: fixturehdrpasset, type: 2}
+  m_RenderPipelineGlobalSettingsMap:
+    m_Keys: []
+    m_Values: []

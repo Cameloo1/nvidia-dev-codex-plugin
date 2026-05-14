@@ -1,0 +1,7 @@
+{
+  "name": "browser-only-video-fixture",
+  "private": true,
+  "scripts": {
+    "test": "echo browser-only"
+  }
+}

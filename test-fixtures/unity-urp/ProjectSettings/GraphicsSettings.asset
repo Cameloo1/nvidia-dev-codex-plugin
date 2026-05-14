@@ -1,0 +1,5 @@
+%YAML 1.1
+--- !u!30 &1
+GraphicsSettings:
+  m_CustomRenderPipeline: {fileID: 11400000, guid: fixtureurpasset, type: 2}
+  UniversalRenderPipelineAsset: true

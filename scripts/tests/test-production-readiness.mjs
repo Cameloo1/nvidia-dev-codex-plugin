@@ -48,6 +48,11 @@ try {
   const tools = listed.result.tools.map((tool) => tool.name);
   for (const tool of [
     "nvidia_header_inspector",
+    "nvidia_sdk_header_grounding",
+    "nvidia_implementation_contracts",
+    "nvidia_implementation_readiness_report",
+    "nvidia_unreal_dlss_validator",
+    "nvidia_unity_hdrp_validator",
     "nvidia_registry_audit",
     "nvidia_release_readiness",
     "nvidia_submission_packager"

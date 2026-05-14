@@ -1,0 +1,15 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "fixture-5.5",
+  "FriendlyName": "NVIDIA DLSS",
+  "Description": "Fixture NVIDIA DLSS Unreal plugin descriptor.",
+  "EngineVersion": "5.5.0",
+  "Modules": [
+    {
+      "Name": "NvidiaDLSS",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

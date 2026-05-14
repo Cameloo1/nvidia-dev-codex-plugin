@@ -5,6 +5,11 @@ Assert-Truthy ($selfTest.version -eq '1.0.0-rc.1') "Expected version 1.0.0-rc.1,
 
 foreach ($tool in @(
   'nvidia_header_inspector',
+  'nvidia_sdk_header_grounding',
+  'nvidia_implementation_contracts',
+  'nvidia_implementation_readiness_report',
+  'nvidia_unreal_dlss_validator',
+  'nvidia_unity_hdrp_validator',
   'nvidia_registry_audit',
   'nvidia_release_readiness',
   'nvidia_submission_packager'

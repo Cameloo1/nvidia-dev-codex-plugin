@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import { inspectNvidiaHeaders } from "./lib/header-inspector.mjs";
+import { buildHeaderGrounding, inspectNvidiaHeaders } from "./lib/header-inspector.mjs";
 import { auditTechnologyRegistry } from "./lib/registry-audit.mjs";
 import { toolContractSummaries } from "./lib/tool-contracts.mjs";
 
@@ -16,7 +16,9 @@ const USER_AGENT = `nvidia-rtx-dlss-codex-plugin/${VERSION}`;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(HERE, "..");
 const REGISTRY_PATH = join(PLUGIN_ROOT, "data", "nvidia-technology-registry.json");
+const IMPLEMENTATION_CONTRACTS_PATH = join(PLUGIN_ROOT, "data", "nvidia-implementation-contracts.json");
 const registry = loadRegistry();
+const implementationContracts = loadImplementationContracts();
 const cache = new Map();
 let inputBuffer = Buffer.alloc(0);
 
@@ -116,6 +118,148 @@ const tools = [
     }
   },
   {
+    name: "nvidia_implementation_contracts",
+    description:
+      "Evaluate strict pre-implementation contracts for real NVIDIA development targets. Reports satisfied, blocked, or rejected states without editing files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_path: { type: "string", description: "Repository or project path to inspect." },
+        sdk_roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Local SDK/header roots. Missing SDKs are reported as blockers, not tool failures."
+        },
+        contract_ids: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional contract id(s). Defaults to all implementation contracts."
+        },
+        include_evidence: { type: "boolean", default: true },
+        max_files: { type: "number", default: 8000 }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "nvidia_implementation_readiness_report",
+    description:
+      "Combine project classification, SDK/header discovery, implementation contracts, patch planning, validation harness planning, license guard checks, and compile/runtime evidence into one ready/blocked/unsafe/verified implementation-readiness report.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal: { type: "string", description: "The NVIDIA implementation goal to evaluate." },
+        project_path: { type: "string", description: "Repository or project path to inspect." },
+        technology: { type: "string", description: "Optional forced NVIDIA technology route." },
+        contract_ids: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional implementation contract id(s). If omitted, the report selects the most relevant contract from the route."
+        },
+        sdk_roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Local SDK/header roots. Missing SDKs are reported as blockers, not tool failures."
+        },
+        target_workflow: {
+          type: "string",
+          enum: ["auto", "unreal", "unity-hdrp", "custom-cpp-renderer", "ffmpeg-gstreamer", "python-video", "web-electron"],
+          default: "auto"
+        },
+        action: {
+          type: "string",
+          description: "Optional action for license/binary boundary checks. Defaults to local report and patch planning."
+        },
+        files: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional file paths involved in the proposed action for license/binary checks."
+        },
+        destination: { type: "string", description: "Optional upload/package destination for license/binary checks." },
+        patch_approved: { type: "boolean", default: false, description: "Set true only when the user already approved the patch plan." },
+        implementation_present: { type: "boolean", default: false, description: "Set true when implementation code already exists and needs validation." },
+        validation_required: { type: "boolean", default: false, description: "Force validation_required state when the user wants proof before further edits." },
+        validation_mode: {
+          type: "string",
+          enum: ["sample-launch-check", "frame-capture-checklist", "codec-throughput", "quality-compare-plan"],
+          default: "sample-launch-check"
+        },
+        sample_path: { type: "string" },
+        command: { type: "string" },
+        compile_evidence_paths: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Existing local compile/build evidence files. Required for implementation_verified."
+        },
+        runtime_evidence_paths: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Existing local runtime/test evidence files. Required for implementation_verified."
+        },
+        validation_artifact_paths: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Existing local validation artifact files. Required for implementation_verified."
+        },
+        include_common_sdk_roots: { type: "boolean", default: false },
+        include_evidence: { type: "boolean", default: true },
+        max_files: { type: "number", default: 8000 }
+      },
+      required: ["goal", "project_path"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "nvidia_unreal_dlss_validator",
+    description:
+      "Inspect an Unreal project for NVIDIA DLSS/Streamline plugin readiness, engine compatibility, config state, packaging risks, logs, and safe patch planning. Does not download plugins or copy NVIDIA binaries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_path: { type: "string", description: "Unreal project root containing a .uproject file." },
+        include_patch_plan: { type: "boolean", default: true },
+        write_files: {
+          type: "boolean",
+          default: false,
+          description: "When false, return planned validation docs/scripts only. When true, create new validation artifacts only after approval_token is supplied."
+        },
+        output_dir: {
+          type: "string",
+          description: "Optional output directory for generated validation docs/scripts. Defaults to <project_path>/_nvidia_unreal_dlss_validation when write_files is true."
+        },
+        approval_token: {
+          type: "string",
+          description: "Required exact value APPROVED_UNREAL_DLSS_VALIDATION when write_files is true."
+        },
+        max_files: { type: "number", default: 8000 },
+        include_evidence: { type: "boolean", default: true }
+      },
+      required: ["project_path"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "nvidia_unity_hdrp_validator",
+    description:
+      "Inspect a Unity project for HDRP DLSS readiness, URP/custom SRP routing, project settings, camera/render-pipeline evidence, Reflex readiness, and safe patch planning. Does not fabricate profiler/FPS data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_path: { type: "string", description: "Unity project root containing ProjectSettings and Packages." },
+        include_patch_plan: { type: "boolean", default: true },
+        write_files: {
+          type: "boolean",
+          default: false,
+          description: "When false, return planned validation docs/scripts only. When true, create new validation artifacts only after approval_token is supplied."
+        },
+        output_dir: {
+          type: "string",
+          description: "Optional output directory for generated validation docs/scripts. Defaults to <project_path>/_nvidia_unity_hdrp_validation when write_files is true."
+        },
+        approval_token: {
+          type: "string",
+          description: "Required exact value APPROVED_UNITY_HDRP_VALIDATION when write_files is true."
+        },
+        max_files: { type: "number", default: 8000 },
+        include_evidence: { type: "boolean", default: true }
+      },
+      required: ["project_path"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "nvidia_integration_plan",
     description:
       "Produce the Phase 1 output contract: classification, recommended route, rejected routes, compatibility state, required data/resources, integration plan, validation plan, risks, and sources.",
@@ -141,6 +285,10 @@ const tools = [
         goal: { type: "string", description: "What the user wants to build, integrate, debug, or prepare." },
         project_path: { type: "string", description: "Optional repository or project path to inspect before guidance." },
         technology: { type: "string", description: "Optional forced NVIDIA technology route." },
+        sdk_roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional local SDK/header roots. Without detected headers, API-specific output is marked template-only."
+        },
         target_workflow: {
           type: "string",
           enum: ["auto", "unreal", "unity-hdrp", "custom-cpp-renderer", "ffmpeg-gstreamer", "python-video", "web-electron"],
@@ -163,6 +311,10 @@ const tools = [
         goal: { type: "string", description: "The NVIDIA integration or modernization goal." },
         project_path: { type: "string", description: "Optional repository or project path to inspect before planning." },
         technology: { type: "string", description: "Optional forced NVIDIA technology route." },
+        sdk_roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional local SDK/header roots for header-grounded planning notes."
+        },
         target_workflow: {
           type: "string",
           enum: ["auto", "unreal", "unity-hdrp", "custom-cpp-renderer", "ffmpeg-gstreamer", "python-video", "web-electron"],
@@ -195,7 +347,12 @@ const tools = [
             "unreal-plugin-config-validation",
             "cmake-sdk-wiring",
             "streamline-init-scaffold",
+            "d3d12-streamline-dlss-sr-kit",
+            "d3d12-dxr-raytracing-starter-kit",
+            "nrd-denoiser-bridge-kit",
+            "video-codec-native-pipeline-kit",
             "video-codec-sample-adaptation",
+            "rtx-video-native-pipeline-kit",
             "rtx-video-pipeline-skeleton",
             "nsight-marker-insertion",
             "reflex-marker-scaffold"
@@ -203,6 +360,10 @@ const tools = [
           default: "auto"
         },
         sdk_root: { type: "string", description: "Optional user-provided SDK root path. This tool never downloads SDKs." },
+        sdk_roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional local SDK/header roots. Use when multiple SDK roots are involved."
+        },
         output_dir: {
           type: "string",
           description: "Optional output directory for generated scaffold files. Defaults to <project_path>/_nvidia_phase3_scaffolds when write_files is true."
@@ -298,6 +459,29 @@ const tools = [
         approval_token: { type: "string", description: "Required exact value APPROVED_PHASE_4_ARTIFACTS when write_artifacts is true." }
       },
       required: ["reference_path", "candidate_path"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "nvidia_sdk_header_grounding",
+    description:
+      "Return header-grounding evidence for a NVIDIA SDK route: detected root/version, relevant headers, observed symbols, missing required symbols, confidence, and real-API guidance gate.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        technology: { type: "string", description: "Technology or workflow, such as dlss-streamline, reflex, nrd, rtx-video-sdk, video-codec-sdk, or streamline-init-scaffold." },
+        roots: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Local SDK/header roots to scan. Defaults to current working directory."
+        },
+        required_symbols: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Optional required symbols override. Defaults to the selected technology profile."
+        },
+        max_files: { type: "number", default: 12000 },
+        include_snippets: { type: "boolean", default: false }
+      },
+      required: ["technology"],
       additionalProperties: false
     }
   },
@@ -416,6 +600,10 @@ const handlers = {
   nvidia_source_resolver: handleSourceResolver,
   nvidia_tech_router: handleTechRouter,
   nvidia_feature_requirements: handleFeatureRequirements,
+  nvidia_implementation_contracts: handleImplementationContracts,
+  nvidia_implementation_readiness_report: handleImplementationReadinessReport,
+  nvidia_unreal_dlss_validator: handleUnrealDlssValidator,
+  nvidia_unity_hdrp_validator: handleUnityHdrpValidator,
   nvidia_integration_plan: handleIntegrationPlan,
   nvidia_code_guidance: handleCodeGuidance,
   nvidia_patch_plan: handlePatchPlan,
@@ -424,6 +612,7 @@ const handlers = {
   nvidia_validation_harness: handleValidationHarness,
   nvidia_log_analyzer: handleLogAnalyzer,
   nvidia_quality_compare: handleQualityCompare,
+  nvidia_sdk_header_grounding: handleSdkHeaderGrounding,
   nvidia_header_inspector: handleHeaderInspector,
   nvidia_registry_audit: handleRegistryAudit,
   nvidia_release_readiness: handleReleaseReadiness,
@@ -441,6 +630,7 @@ if (process.argv.includes("--self-test")) {
         version: VERSION,
         registry_version: registry.schema_version,
         technologies: registry.technologies.map((item) => item.id),
+        implementation_contracts: implementationContracts.contracts.map((item) => item.id),
         tools: tools.map((tool) => tool.name)
       },
       null,
@@ -612,6 +802,295 @@ async function handleFeatureRequirements(args) {
   };
 }
 
+async function handleImplementationContracts(args) {
+  const selectedContracts = selectImplementationContracts(args.contract_ids);
+  const projectRoot = args.project_path ? resolveInputPath(args.project_path) : null;
+  const inventory = projectRoot && existsSync(projectRoot)
+    ? inventoryProject(projectRoot, {
+        maxFiles: clampInt(args.max_files, 8000, 100, 50000),
+        includeEvidence: args.include_evidence !== false
+      })
+    : null;
+  const project = inventory ? classifyInventory(inventory) : null;
+  const sdkRoots = implementationSdkRoots(args.sdk_roots, projectRoot);
+  const headerReport = sdkRoots.length
+    ? inspectNvidiaHeaders({
+        roots: sdkRoots,
+        max_files: clampInt(args.max_files, 12000, 100, 100000),
+        include_snippets: false
+      })
+    : {
+        scanned_roots: [],
+        scanned_files: 0,
+        findings: [],
+        summary: {},
+        warnings: ["No SDK roots or project path were available for header inspection."]
+      };
+
+  const results = selectedContracts.map((contract) =>
+    evaluateImplementationContract(contract, {
+      projectRoot,
+      inventory,
+      project,
+      sdkRoots,
+      headerReport
+    })
+  );
+
+  return {
+    tool: "nvidia_implementation_contracts",
+    phase: "pre-implementation contract gating",
+    edit_policy: "No repository files are edited. This tool only evaluates readiness gates before future implementation kits.",
+    contract_schema_version: implementationContracts.schema_version,
+    project_path: projectRoot,
+    project_classification: project || {
+      state: "needs_inspection",
+      note: "No project_path was provided or the path did not exist."
+    },
+    sdk_header_scan: {
+      scanned_roots: headerReport.scanned_roots,
+      scanned_files: headerReport.scanned_files,
+      summary: headerReport.summary,
+      warnings: headerReport.warnings
+    },
+    summary: summarizeContractResults(results),
+    contracts: results,
+    safety_notes: [
+      "Satisfied contracts are not approval to edit; they mean the project and SDK evidence are sufficient for a future patch plan.",
+      "Patch plan approval, compile/test execution, validation artifacts, and licensing checks remain separate gates.",
+      "Missing SDK/header evidence is a blocker state, not a tool failure."
+    ]
+  };
+}
+
+async function handleImplementationReadinessReport(args) {
+  const projectRoot = resolveInputPath(args.project_path);
+  if (!existsSync(projectRoot)) throw new McpError(-32602, `Project path does not exist: ${projectRoot}`);
+
+  const maxFiles = clampInt(args.max_files, 8000, 100, 50000);
+  const inventory = inventoryProject(projectRoot, {
+    maxFiles,
+    includeEvidence: args.include_evidence !== false
+  });
+  const project = classifyInventory(inventory);
+  const route = args.technology ? routeFromTechnology(args.technology) : routeGoal(args.goal, "", project);
+  const primaryRoute = route.recommended[0];
+  if (!primaryRoute) throw new McpError(-32602, "No NVIDIA route could be selected from the provided goal.");
+
+  const workflow = normalizePhase2Workflow(args.target_workflow, args.goal, project, primaryRoute);
+  const sdkRoots = implementationReadinessSdkRoots(args, projectRoot);
+  const sdkScan = buildImplementationReadinessSdkScan(args, sdkRoots, maxFiles);
+  const headerInspector = inspectNvidiaHeaders({
+    roots: sdkRoots,
+    max_files: maxFiles,
+    include_snippets: false
+  });
+  const headerGrounding = buildHeaderGrounding({
+    roots: sdkRoots,
+    technology: headerTechnologyForWorkflow(workflow, primaryRoute.technology_id),
+    max_files: maxFiles,
+    include_snippets: false
+  });
+
+  const contractIds = implementationReadinessContractIds(args.contract_ids, primaryRoute, workflow, args.goal);
+  const selectedContracts = selectImplementationContracts(contractIds);
+  const contractResults = selectedContracts.map((contract) =>
+    evaluateImplementationContract(contract, {
+      projectRoot,
+      inventory,
+      project,
+      sdkRoots,
+      headerReport: headerInspector
+    })
+  );
+
+  const context = buildPhase2Context({
+    ...args,
+    project_path: projectRoot,
+    sdk_roots: sdkRoots,
+    target_workflow: workflow,
+    include_evidence: args.include_evidence,
+    max_files: maxFiles
+  });
+  const workflowPlan = phase2WorkflowPlan(context);
+  const selectedPatchSteps = context.unrealValidation?.safe_patch_plan?.steps || context.unityHdrpValidation?.safe_patch_plan?.steps || workflowPlan.patch_plan;
+  const patchPlan = {
+    phase: "Phase 2 repo-aware patch planning",
+    edit_policy: "Plan only. This report does not modify target files.",
+    approval_gate: args.patch_approved
+      ? "patch_approved=true was supplied by the caller. Validation is still required before verified implementation claims."
+      : "Patch work still requires explicit user approval before edits.",
+    files_likely_affected: workflowPlan.likely_files,
+    steps: tunePatchPlanForRisk(selectedPatchSteps, "low"),
+    risk_analysis: {
+      risks: workflowPlan.risks,
+      regression_hotspots: workflowPlan.regression_hotspots
+    },
+    rollback_plan: workflowPlan.rollback_plan
+  };
+
+  const validationHarness = buildValidationHarness({
+    technology: findTechnology(primaryRoute.technology_id),
+    technologyInput: primaryRoute.technology_id,
+    workflow,
+    projectRoot,
+    samplePath: args.sample_path ? resolveInputPath(args.sample_path) : null,
+    command: args.command,
+    mode: args.validation_mode || "sample-launch-check"
+  });
+  const licenseGuard = buildLicenseGuardReport({
+    action: args.action || "generate local implementation readiness report and patch plan",
+    technology: primaryRoute.technology_id,
+    files: args.files,
+    destination: args.destination
+  });
+  const verification = evaluateImplementationVerification(args);
+  const state = determineImplementationReadinessState({
+    project,
+    inventory,
+    contractResults,
+    licenseGuard,
+    verification,
+    args
+  });
+
+  return {
+    tool: "nvidia_implementation_readiness_report",
+    phase: "single structured implementation-readiness report",
+    output_state: state.state,
+    state_reason: state.reason,
+    state_priority: [
+      "unsafe_license_or_binary_boundary",
+      "blocked_unsupported_project",
+      "blocked_missing_sdk",
+      "blocked_missing_renderer_contract",
+      "implementation_verified",
+      "validation_required",
+      "ready_to_patch"
+    ],
+    edit_policy: "No repository files are edited. This report coordinates existing gates and returns a patch/validation plan only.",
+    project_classifier: {
+      root: projectRoot,
+      scanned_files: inventory.scannedFiles,
+      classification: project,
+      evidence: args.include_evidence === false ? undefined : inventory.evidence?.slice(0, 50)
+    },
+    sdk_locator: sdkScan,
+    header_inspector: {
+      scanned_roots: headerInspector.scanned_roots,
+      scanned_files: headerInspector.scanned_files,
+      summary: headerInspector.summary,
+      warnings: headerInspector.warnings
+    },
+    header_grounding: headerGrounding,
+    implementation_contract_checker: {
+      contract_ids: contractIds,
+      summary: summarizeContractResults(contractResults),
+      contracts: contractResults
+    },
+    patch_plan: patchPlan,
+    validation_harness: {
+      mode: args.validation_mode || "sample-launch-check",
+      execution_state: validationHarness.execution_state,
+      blocked_reasons: validationHarness.blocked_reasons,
+      command_plan: validationHarness.command_plan,
+      required_tools: validationHarness.required_tools,
+      expected_artifacts: validationHarness.expected_artifacts,
+      pass_fail_criteria: validationHarness.pass_fail_criteria,
+      safety_notes: validationHarness.safety_notes,
+      rollback_notes: validationHarness.rollback_notes
+    },
+    license_guard: licenseGuard,
+    verification,
+    blockers: state.blockers,
+    next_actions: implementationReadinessNextActions(state.state, {
+      contractResults,
+      validationHarness,
+      verification,
+      licenseGuard
+    }),
+    non_claims: [
+      "This report does not claim NVIDIA implementation is verified unless compile evidence, runtime evidence, and validation artifacts are all present and pass deterministic checks.",
+      "This report does not download SDKs, copy NVIDIA binaries, upload artifacts, or edit project files.",
+      "Ready to patch means the repo and local evidence are sufficient for an approved patch attempt; it is not runtime proof."
+    ],
+    sources: sourceRefs([
+      ...(findTechnology(primaryRoute.technology_id)?.official_sources || []),
+      ...contractResults.flatMap((contract) => contract.sources?.map((source) => source.id) || [])
+    ])
+  };
+}
+
+async function handleUnrealDlssValidator(args) {
+  const projectRoot = resolveInputPath(args.project_path);
+  if (!existsSync(projectRoot)) throw new McpError(-32602, `Project path does not exist: ${projectRoot}`);
+  const inventory = inventoryProject(projectRoot, {
+    maxFiles: clampInt(args.max_files, 8000, 100, 50000),
+    includeEvidence: args.include_evidence !== false
+  });
+  const project = classifyInventory(inventory);
+  const validation = buildUnrealDlssValidation(projectRoot, inventory, project, { includePatchPlan: args.include_patch_plan !== false });
+  const writtenFiles = writeUnrealValidationArtifacts(validation.artifacts, projectRoot, args);
+
+  return {
+    tool: "nvidia_unreal_dlss_validator",
+    phase: "first real engine workflow",
+    edit_policy:
+      "No Unreal project files are modified. This tool only inspects the repo, returns a patch plan, and optionally creates separate validation docs/scripts after explicit approval.",
+    artifact_policy:
+      args.write_files === true
+        ? "write_files was requested and approval_token was accepted before creating validation artifacts."
+        : "No files were written. To create validation artifacts, call again with write_files=true and approval_token=APPROVED_UNREAL_DLSS_VALIDATION.",
+    classification: project,
+    validation_report: validation.validation_report,
+    safe_patch_plan: validation.safe_patch_plan,
+    candidate_artifacts: validation.artifacts,
+    written_files: writtenFiles,
+    safety_boundaries: [
+      "No Unreal plugin download.",
+      "No NVIDIA binary copy.",
+      "No .uproject, .uplugin, Config/*.ini, or packaging file writes without a separate explicit implementation approval.",
+      "Validation docs/scripts are create-only artifacts and are never overwrites."
+    ],
+    sources: sourceRefs(["nvidia-dlss", "streamline-releases", "streamline-programming-guide"])
+  };
+}
+
+async function handleUnityHdrpValidator(args) {
+  const projectRoot = resolveInputPath(args.project_path);
+  if (!existsSync(projectRoot)) throw new McpError(-32602, `Project path does not exist: ${projectRoot}`);
+  const inventory = inventoryProject(projectRoot, {
+    maxFiles: clampInt(args.max_files, 8000, 100, 50000),
+    includeEvidence: args.include_evidence !== false
+  });
+  const project = classifyInventory(inventory);
+  const validation = buildUnityHdrpValidation(projectRoot, inventory, project, { includePatchPlan: args.include_patch_plan !== false });
+  const writtenFiles = writeUnityValidationArtifacts(validation.artifacts, projectRoot, args);
+
+  return {
+    tool: "nvidia_unity_hdrp_validator",
+    phase: "Unity HDRP DLSS readiness workflow",
+    edit_policy:
+      "No Unity project files are modified. This tool inspects ProjectSettings, Packages, assets, and scripts, returns a patch plan, and optionally creates separate validation docs/scripts after explicit approval.",
+    artifact_policy:
+      args.write_files === true
+        ? "write_files was requested and approval_token was accepted before creating validation artifacts."
+        : "No files were written. To create validation artifacts, call again with write_files=true and approval_token=APPROVED_UNITY_HDRP_VALIDATION.",
+    classification: project,
+    validation_report: validation.validation_report,
+    safe_patch_plan: validation.safe_patch_plan,
+    candidate_artifacts: validation.artifacts,
+    written_files: writtenFiles,
+    safety_boundaries: [
+      "No fake FPS, frame-time, or profiler data.",
+      "No runtime success claim without a runnable Unity validation path and captured logs/results.",
+      "No ProjectSettings, Packages/manifest.json, scene, asset, or script edits without separate explicit implementation approval.",
+      "Validation docs/scripts are create-only artifacts and are never overwrites."
+    ],
+    sources: sourceRefs(["nvidia-dlss", "nvidia-reflex"])
+  };
+}
+
 async function handleIntegrationPlan(args) {
   const project = args.project_path ? classifyInventory(inventoryProject(resolveInputPath(args.project_path), { maxFiles: 8000, includeEvidence: true })) : null;
   const route = args.technology
@@ -647,6 +1126,7 @@ async function handleIntegrationPlan(args) {
 async function handleCodeGuidance(args) {
   const context = buildPhase2Context(args);
   const workflow = phase2WorkflowPlan(context);
+  const apiGate = apiGenerationGate(context.headerGrounding, true);
 
   return {
     tool: "nvidia_code_guidance",
@@ -661,8 +1141,13 @@ async function handleCodeGuidance(args) {
     recommended_nvidia_route: context.primaryRoute,
     rejected_routes: context.route.rejected,
     compatibility_state: context.requirements?.compatibility_state || "needs_inspection",
+    code_output_mode: apiGate.code_output_mode,
+    api_generation_gate: apiGate,
+    header_grounding: context.headerGrounding,
+    unreal_validation_report: context.unrealValidation?.validation_report,
+    unity_hdrp_validation_report: context.unityHdrpValidation?.validation_report,
     no_edit_diagnosis: noEditDiagnosis(context, workflow),
-    code_guidance: workflow.code_guidance,
+    code_guidance: headerGroundedGuidance(workflow.code_guidance, apiGate, context.headerGrounding),
     source_backed_constraints: workflow.source_backed_constraints,
     likely_files: workflow.likely_files,
     missing_information: phase2MissingInformation(context, workflow),
@@ -676,6 +1161,8 @@ async function handlePatchPlan(args) {
   const context = buildPhase2Context(args);
   const workflow = phase2WorkflowPlan(context);
   const riskTolerance = args.risk_tolerance || "low";
+  const apiGate = apiGenerationGate(context.headerGrounding, false);
+  const selectedPatchPlan = context.unrealValidation?.safe_patch_plan?.steps || context.unityHdrpValidation?.safe_patch_plan?.steps || workflow.patch_plan;
 
   return {
     tool: "nvidia_patch_plan",
@@ -690,9 +1177,14 @@ async function handlePatchPlan(args) {
     recommended_nvidia_route: context.primaryRoute,
     rejected_routes: context.route.rejected,
     compatibility_state: context.requirements?.compatibility_state || "needs_inspection",
+    code_output_mode: apiGate.code_output_mode,
+    api_generation_gate: apiGate,
+    header_grounding: context.headerGrounding,
+    unreal_validation_report: context.unrealValidation?.validation_report,
+    unity_hdrp_validation_report: context.unityHdrpValidation?.validation_report,
     no_edit_diagnosis: noEditDiagnosis(context, workflow),
     files_likely_affected: workflow.likely_files,
-    patch_plan: tunePatchPlanForRisk(workflow.patch_plan, riskTolerance),
+    patch_plan: tunePatchPlanForRisk(selectedPatchPlan, riskTolerance),
     risk_analysis: {
       risk_tolerance: riskTolerance,
       risks: workflow.risks,
@@ -728,6 +1220,9 @@ async function handleAssistedImplementation(args) {
     recommended_nvidia_route: context.primaryRoute,
     rejected_routes: context.route.rejected,
     compatibility_state: context.requirements?.compatibility_state || "needs_inspection",
+    code_output_mode: implementation.code_output_mode,
+    api_generation_gate: implementation.api_generation_gate,
+    header_grounding: implementation.header_grounding,
     sdk_root: context.sdkRoot,
     implementation_package: implementation,
     written_files: writtenFiles,
@@ -861,6 +1356,25 @@ async function handleQualityCompare(args) {
       "VMAF is only available when local FFmpeg includes libvmaf."
     ],
     sources: sourceRefs(["video-codec-sdk", "rtx-video-sdk"])
+  };
+}
+
+async function handleSdkHeaderGrounding(args) {
+  const roots = normalizeStringList(args.roots).map(resolveInputPath);
+  const result = buildHeaderGrounding({
+    roots: roots.length ? roots : [process.cwd()],
+    technology: args.technology,
+    required_symbols: normalizeStringList(args.required_symbols),
+    max_files: args.max_files,
+    include_snippets: args.include_snippets === true
+  });
+  return {
+    tool: "nvidia_sdk_header_grounding",
+    phase: "header-grounded generation",
+    source_policy: "Real SDK API guidance is allowed only when required symbols are observed in local headers.",
+    api_generation_gate: apiGenerationGate(result, true),
+    ...result,
+    sources: sourceRefs(["streamline-programming-guide", "streamline-dlssg-guide", "video-codec-sdk", "rtx-video-sdk", "nvidia-reflex", "rtx-kit"])
   };
 }
 
@@ -1027,6 +1541,13 @@ async function handleKnownIssuesLookup(args) {
 }
 
 async function handleLicenseGuard(args) {
+  return {
+    tool: "nvidia_license_guard",
+    ...buildLicenseGuardReport(args)
+  };
+}
+
+function buildLicenseGuardReport(args) {
   const action = lower(args.action);
   const files = normalizeStringList(args.files);
   const binaryLike = files.filter((file) => /\.(dll|so|dylib|lib|a|exe|bin|zip|7z)$/i.test(file));
@@ -1062,7 +1583,6 @@ async function handleLicenseGuard(args) {
   }
 
   return {
-    tool: "nvidia_license_guard",
     action: args.action,
     technology: tech?.id || args.technology || null,
     files,
@@ -1080,6 +1600,224 @@ async function handleLicenseGuard(args) {
     ],
     sources: sourceRefs(["streamline-programming-guide", "streamline-releases", "nvidia-optical-flow-download", "rtx-video-sdk", "video-codec-sdk"])
   };
+}
+
+function implementationReadinessSdkRoots(args, projectRoot) {
+  const roots = new Set();
+  for (const value of normalizeStringList(args.sdk_roots)) roots.add(resolveInputPath(value));
+  if (projectRoot) roots.add(projectRoot);
+  return [...roots].filter((root) => root && existsSync(root));
+}
+
+function buildImplementationReadinessSdkScan(args, sdkRoots, maxFiles) {
+  const roots = new Set(sdkRoots);
+  if (args.include_common_sdk_roots === true) {
+    for (const root of buildSdkRoots({ roots: [], include_common_roots: true })) {
+      if (root) roots.add(root);
+    }
+  }
+
+  const scanned = [];
+  const found = [];
+  for (const root of [...roots]) {
+    if (!root || !existsSync(root)) continue;
+    scanned.push(root);
+    found.push(...scanForSdks(root, maxFiles));
+  }
+  return {
+    tool: "nvidia_sdk_locator",
+    scanned_roots: [...new Set(scanned)],
+    found: dedupeSdkFinds(found),
+    include_common_sdk_roots: args.include_common_sdk_roots === true,
+    missing_is_not_failure: true,
+    notes: [
+      "SDK discovery is local-only.",
+      "Missing SDK/header evidence becomes a report state, not a tool crash.",
+      "Pass sdk_roots when NVIDIA SDKs are installed outside the project."
+    ]
+  };
+}
+
+function implementationReadinessContractIds(input, primaryRoute, workflow, goal) {
+  const explicit = normalizeStringList(input);
+  if (explicit.length) return explicit;
+  const text = lower(`${goal}\n${workflow}\n${primaryRoute?.technology_id || ""}`);
+  const technologyId = primaryRoute?.technology_id;
+  if (technologyId === "video-codec-sdk" || matchesAny(text, ["nvenc", "nvdec", "ffmpeg", "gstreamer", "pynvvideocodec"])) return ["video-codec-nvenc-nvdec-pipeline"];
+  if (technologyId === "rtx-video-sdk" || matchesAny(text, ["rtx video", "video enhancement", "super resolution", "sdr-to-hdr"])) return ["rtx-video-enhancement-pipeline"];
+  if (technologyId === "rtx-kit" && matchesAny(text, ["nrd", "denoiser", "reblur", "relax", "sigma"])) return ["nrd-denoiser-readiness"];
+  if (technologyId === "rtx-kit" || matchesAny(text, ["dxr", "ray tracing", "ray-traced", "shadows", "reflections"])) return ["d3d12-dxr-raytracing-base"];
+  if (technologyId === "dlss-streamline" && matchesAny(text, ["frame generation", "multi frame", "mfg", "fg"])) return ["streamline-dlss-fg-mfg-readiness"];
+  if (technologyId === "dlss-streamline" || workflow === "custom-cpp-renderer") return ["streamline-dlss-sr-dlaa"];
+  return implementationContracts.contracts.map((contract) => contract.id);
+}
+
+function determineImplementationReadinessState({ project, inventory, contractResults, licenseGuard, verification, args }) {
+  const blockers = [];
+  const unsafe = licenseGuardHasUnsafeBoundary(licenseGuard);
+  if (unsafe) {
+    blockers.push(...licenseGuard.decisions.filter((decision) => decision.decision !== "plan_only_ok").map((decision) => decision.reason));
+    return {
+      state: "unsafe_license_or_binary_boundary",
+      reason: "The proposed action crosses a download, upload, packaging, redistribution, binary, or destination boundary that needs explicit license/safety approval.",
+      blockers: [...new Set(blockers)]
+    };
+  }
+
+  const unsupported = contractResults.some((contract) => contract.state === "rejected_unsupported_project") || isBrowserOnlyProject(project, inventory);
+  if (unsupported) {
+    blockers.push(...contractResults.flatMap((contract) => contract.state === "rejected_unsupported_project" ? contract.blockers : []));
+    if (isBrowserOnlyProject(project, inventory)) blockers.push("Pure browser/browser-video project cannot use native NVIDIA SDKs directly.");
+    return {
+      state: "blocked_unsupported_project",
+      reason: "The inspected project is not a supported native/engine/media route for the requested NVIDIA implementation target.",
+      blockers: [...new Set(blockers)]
+    };
+  }
+
+  if (contractResults.some((contract) => contract.state === "blocked_missing_sdk")) {
+    blockers.push(...contractResults.flatMap((contract) => contract.state === "blocked_missing_sdk" ? contract.blockers : []));
+    return {
+      state: "blocked_missing_sdk",
+      reason: "The project may be structurally compatible, but required local NVIDIA SDK/header evidence is missing.",
+      blockers: [...new Set(blockers)]
+    };
+  }
+
+  const missingRendererContract = !contractResults.length || contractResults.some((contract) =>
+    ["blocked_missing_project_contract", "needs_project_inspection"].includes(contract.state)
+  );
+  if (missingRendererContract) {
+    blockers.push(...contractResults.flatMap((contract) => ["blocked_missing_project_contract", "needs_project_inspection"].includes(contract.state) ? contract.blockers : []));
+    if (!contractResults.length) blockers.push("No implementation contract was selected or evaluated.");
+    return {
+      state: "blocked_missing_renderer_contract",
+      reason: "Required project/API/input/build evidence is missing for real NVIDIA implementation work.",
+      blockers: [...new Set(blockers)]
+    };
+  }
+
+  if (verification.implementation_verified) {
+    return {
+      state: "implementation_verified",
+      reason: "Compile evidence, runtime evidence, and validation artifact evidence were all provided and passed deterministic evidence checks.",
+      blockers: []
+    };
+  }
+
+  if (args.patch_approved === true || args.implementation_present === true || args.validation_required === true || verification.any_evidence_supplied) {
+    blockers.push(...verification.missing_or_failed_evidence);
+    return {
+      state: "validation_required",
+      reason: "The project is structurally ready, but implementation readiness cannot be verified until compile/runtime validation artifacts are produced.",
+      blockers: [...new Set(blockers)]
+    };
+  }
+
+  return {
+    state: "ready_to_patch",
+    reason: "Project, SDK/header, contract, patch-plan, and license-boundary gates are sufficient to ask for explicit patch approval.",
+    blockers: []
+  };
+}
+
+function licenseGuardHasUnsafeBoundary(licenseGuard) {
+  return (licenseGuard.decisions || []).some((decision) =>
+    ["ask_user_first", "license_review_required", "explicit_destination_required"].includes(decision.decision)
+  );
+}
+
+function evaluateImplementationVerification(args) {
+  const compile = evaluateEvidenceGroup("compile", args.compile_evidence_paths, /build succeeded|compile success|compilation succeeded|0 errors|tests passed|passed|success/i);
+  const runtime = evaluateEvidenceGroup("runtime", args.runtime_evidence_paths, /runtime validation passed|sample launch passed|feature support passed|tests passed|passed|success/i);
+  const validation = evaluateEvidenceGroup("validation", args.validation_artifact_paths, /validation passed|validation artifact|psnr|ssim|vmaf|nsight|throughput|capture|passed|success/i);
+  const groups = [compile, runtime, validation];
+  const missingOrFailed = groups.flatMap((group) => group.status === "pass" ? [] : group.messages);
+  return {
+    implementation_verified: groups.every((group) => group.status === "pass"),
+    any_evidence_supplied: groups.some((group) => group.paths.length > 0),
+    compile_evidence: compile,
+    runtime_evidence: runtime,
+    validation_artifacts: validation,
+    missing_or_failed_evidence: missingOrFailed,
+    proof_rule: "implementation_verified requires at least one existing compile evidence file, one existing runtime evidence file, and one existing validation artifact file with deterministic success markers."
+  };
+}
+
+function evaluateEvidenceGroup(kind, input, successPattern) {
+  const paths = normalizeStringList(input).map(resolveInputPath);
+  if (!paths.length) {
+    return {
+      kind,
+      status: "missing",
+      paths: [],
+      messages: [`Missing ${kind} evidence path.`]
+    };
+  }
+  const evidence = paths.map((path) => {
+    if (!existsSync(path)) {
+      return { path, exists: false, matched_success_marker: false, message: `${kind} evidence file does not exist: ${path}` };
+    }
+    const text = safeRead(path, 200000);
+    return {
+      path,
+      exists: true,
+      bytes_read: text.length,
+      matched_success_marker: successPattern.test(text),
+      message: successPattern.test(text) ? `${kind} evidence passed deterministic marker check.` : `${kind} evidence exists but no success marker was found.`
+    };
+  });
+  const failed = evidence.filter((item) => !item.exists || !item.matched_success_marker);
+  return {
+    kind,
+    status: failed.length ? "fail" : "pass",
+    paths,
+    evidence,
+    messages: failed.map((item) => item.message)
+  };
+}
+
+function implementationReadinessNextActions(state, context) {
+  const actions = {
+    ready_to_patch: [
+      "Ask the user to approve the patch plan before generating or editing implementation files.",
+      "Keep SDK paths user-provided and license-approved.",
+      "Prepare compile and runtime validation commands before merging changes."
+    ],
+    blocked_missing_sdk: [
+      "Ask the user for the local NVIDIA SDK/header root that matches the selected technology.",
+      "Re-run the report with sdk_roots set to the local SDK path.",
+      "Do not generate real SDK API calls until header grounding passes."
+    ],
+    blocked_missing_renderer_contract: [
+      "Inspect or add the missing renderer/media contract inputs before implementation.",
+      "Re-run implementation contracts after the repo exposes required resources, API route, build path, and validation hooks.",
+      "Keep output template-only until the contract passes."
+    ],
+    blocked_unsupported_project: [
+      "Choose a supported native, engine, media, Electron/native-helper, or server-side route.",
+      "Do not claim browser-only access to native NVIDIA SDKs.",
+      "Re-run the report after the architecture boundary is explicit."
+    ],
+    unsafe_license_or_binary_boundary: [
+      "Stop before downloading, copying, packaging, redistributing, or uploading NVIDIA/user artifacts.",
+      "Get explicit user approval and review NVIDIA SDK/license terms for the exact files and destination.",
+      "Prefer local inspection and user-provided SDK paths."
+    ],
+    validation_required: [
+      "Run the compile/build command from the contract or project build system.",
+      "Run the validation harness with a real command/sample path.",
+      "Attach compile evidence, runtime evidence, and validation artifact paths before asking for verified status."
+    ],
+    implementation_verified: [
+      "Keep the compile/runtime/validation artifacts with the change record.",
+      "Review remaining license/package boundaries before release.",
+      "Do not generalize verification beyond the tested GPU, driver, SDK, sample, and project configuration."
+    ]
+  };
+  return actions[state] || [
+    "Inspect report blockers and re-run after missing evidence is supplied."
+  ];
 }
 
 function inventoryProject(root, options) {
@@ -1275,16 +2013,30 @@ function classifyInventory(inventory) {
       existingNvidia.add("NVENC");
       bump("video_pipeline", 6);
       contentPaths.add("video_encode_decode");
+      add("content_path", "NVENC encode path", file, snippetFor(text, tokenize("nvenc encode codec pixel format bit depth")));
     }
     if (/cuvid|nvcuvid|NVDEC|CUVID/i.test(text)) {
       existingNvidia.add("NVDEC");
       bump("video_pipeline", 6);
       contentPaths.add("video_encode_decode");
+      add("content_path", "NVDEC decode path", file, snippetFor(text, tokenize("nvdec cuvid decode codec pixel format bit depth")));
     }
     if (/PyNvVideoCodec|pynvvideocodec/i.test(text)) {
       existingNvidia.add("PyNvVideoCodec");
       bump("python_video", 7);
       contentPaths.add("video_encode_decode");
+      add("content_path", "PyNvVideoCodec path", file, snippetFor(text, tokenize("PyNvVideoCodec encode decode gpu frames")));
+    }
+    if (/RTXVideo|RTX Video|rtxvsr|VSR|video super resolution|ArtifactReduction|artifact reduction|SdrToHdr|SDR-to-HDR/i.test(text) || /RTXVideo|rtx.*video/i.test(rel)) {
+      existingNvidia.add("RTX Video SDK");
+      bump("video_pipeline", 7);
+      contentPaths.add("media_playback");
+      add("content_path", "RTX Video/media enhancement", file, snippetFor(text, tokenize("RTXVideo video frame super resolution artifact reduction SDR HDR")));
+    }
+    if (/media player|playback enhancement|decoded frame|video frame|frame surface|output surface|display path/i.test(text)) {
+      bump("video_pipeline", 4);
+      contentPaths.add("media_playback");
+      add("content_path", "Media playback frame path", file, snippetFor(text, tokenize("media player decoded frame video frame output surface display path")));
     }
     if (/\.py$/i.test(file.name) && /cv2|opencv|moviepy|imageio|ffmpeg|av\.open|decord|torchvision\.io|VideoCapture|VideoWriter/i.test(text)) {
       bump("python_video", 5);
@@ -1299,10 +2051,12 @@ function classifyInventory(inventory) {
     if (/libavcodec|avcodec|avformat|ffmpeg/i.test(text)) {
       bump("ffmpeg", 5);
       contentPaths.add("video_encode_decode");
+      add("content_path", "FFmpeg/libav codec pipeline", file, snippetFor(text, tokenize("ffmpeg libav codec nvenc nvdec hwaccel")));
     }
-    if (/gstreamer|gst_element|nvh264enc|nvh265enc|nvav1enc/i.test(text)) {
+    if (/gstreamer|gst_element|gst-launch|nvh264enc|nvh265enc|nvav1enc|nvh264dec|nvh265dec/i.test(text)) {
       bump("gstreamer", 5);
       contentPaths.add("video_encode_decode");
+      add("content_path", "GStreamer codec pipeline", file, snippetFor(text, tokenize("gstreamer gst nvenc nvdec caps memory")));
     }
   }
 
@@ -1640,6 +2394,1032 @@ function requirementsReport(tech, args, project, env) {
   };
 }
 
+function selectImplementationContracts(input) {
+  const requested = normalizeStringList(input);
+  if (!requested.length) return implementationContracts.contracts;
+  const selected = [];
+  for (const id of requested) {
+    const contract = findImplementationContract(id);
+    if (!contract) throw new McpError(-32602, `Unknown implementation contract: ${id}`);
+    selected.push(contract);
+  }
+  return selected;
+}
+
+function findImplementationContract(value) {
+  const needle = lower(value);
+  return implementationContracts.contracts.find(
+    (contract) =>
+      lower(contract.id) === needle ||
+      lower(contract.name) === needle ||
+      lower(contract.id).includes(needle) ||
+      lower(contract.name).includes(needle)
+  );
+}
+
+function implementationSdkRoots(input, projectRoot) {
+  const roots = new Set();
+  for (const value of normalizeStringList(input)) {
+    if (value) roots.add(resolveInputPath(value));
+  }
+  if (projectRoot) roots.add(projectRoot);
+  return [...roots].filter((root) => root && existsSync(root));
+}
+
+function evaluateImplementationContract(contract, context) {
+  const checks = {
+    project_type: checkProjectTypes(contract, context.project),
+    unsupported_project: checkUnsupportedProject(contract, context.project, context.inventory),
+    graphics_api: checkGraphicsApis(contract, context.project),
+    content_path: checkContentPaths(contract, context.project),
+    header_evidence: checkHeaderEvidence(contract, context.headerReport, context.inventory),
+    input_resources: checkInputResources(contract, context.inventory),
+    build_system: checkBuildSystem(contract, context.project),
+    build_capabilities: checkBuildCapabilities(contract, context.inventory),
+    runtime_validation: checkRuntimeValidation(contract),
+    source_evidence: checkContractSources(contract)
+  };
+
+  const blockers = [];
+  const rejected = checks.unsupported_project.status === "fail";
+  if (!context.project) blockers.push("Project inspection is required.");
+  if (rejected) blockers.push(...checks.unsupported_project.missing);
+  if (checks.header_evidence.status === "fail") blockers.push(...checks.header_evidence.missing);
+  for (const key of ["project_type", "graphics_api", "content_path", "input_resources", "build_system", "build_capabilities", "source_evidence"]) {
+    const check = checks[key];
+    if (check?.status === "fail") blockers.push(...(check.missing || []));
+  }
+
+  const missingSdk = checks.header_evidence.status === "fail";
+  const missingProjectContract = ["project_type", "graphics_api", "content_path", "input_resources", "build_system", "build_capabilities", "source_evidence"].some(
+    (key) => checks[key]?.status === "fail"
+  );
+  const state = !context.project
+    ? "needs_project_inspection"
+    : rejected
+      ? "rejected_unsupported_project"
+      : missingSdk
+        ? "blocked_missing_sdk"
+        : missingProjectContract
+          ? "blocked_missing_project_contract"
+          : "satisfied";
+
+  const compileCommand = compileCommandForContract(contract, context.project);
+  return {
+    contract_id: contract.id,
+    name: contract.name,
+    technology_id: contract.technology_id,
+    support_level: contract.support_level,
+    state,
+    state_reason: contractStateReason(state),
+    gates: [
+      gate("local_sdk_header_detected", checks.header_evidence.status, checks.header_evidence.summary),
+      gate("source_backed_docs_available", checks.source_evidence.status, checks.source_evidence.summary),
+      gate("repo_contract_satisfied", missingProjectContract || rejected || !context.project ? "fail" : "pass", "Project type, API/content path, inputs, and build-system capabilities meet this contract."),
+      gate("patch_plan_approved", "required_before_edits", "A satisfied contract only permits a future patch plan; edits still require explicit approval."),
+      gate("compile_test_command_available", compileCommand ? "pass" : "fail", compileCommand || "No compile/test command could be planned from the observed build system."),
+      gate("validation_artifact_produced", "required_before_claiming_ready", "A local validation artifact must be produced before implementation readiness is claimed.")
+    ],
+    checks,
+    compile_test_command: compileCommand,
+    required_runtime_validation: contract.required_runtime_validation || [],
+    blockers: [...new Set(blockers)],
+    unsafe_assumptions: contract.unsafe_assumptions || [],
+    implementation_boundaries: [
+      "No generated renderer edits from this contract layer.",
+      "No NVIDIA SDK download or binary copy.",
+      "No feature UI exposure before runtime support checks.",
+      "No implementation-ready claim without compile/runtime validation artifacts."
+    ],
+    sources: sourceRefs(contract.source_ids)
+  };
+}
+
+function contractStateReason(state) {
+  const table = {
+    satisfied: "All contract checks passed. Patch planning can proceed, but implementation edits still require approval and validation.",
+    blocked_missing_sdk: "Project evidence may be present, but required local SDK/header evidence was not found.",
+    blocked_missing_project_contract: "Local SDK/header evidence may be present, but the repo does not satisfy all project/API/input/build contract requirements.",
+    rejected_unsupported_project: "The project matched an unsupported project type for this native NVIDIA implementation target.",
+    needs_project_inspection: "No inspectable project path was available."
+  };
+  return table[state] || state;
+}
+
+function gate(name, status, detail) {
+  return { name, status, detail };
+}
+
+function checkProjectTypes(contract, project) {
+  if (!project) return failCheck(["Project path was not inspected."]);
+  const types = projectTypes(project);
+  const required = contract.required_project_types_any || [];
+  if (!required.length) return passCheck("No project-type requirement.");
+  const matched = required.filter((item) => types.has(lower(item)));
+  return matched.length
+    ? passCheck(`Matched project type(s): ${matched.join(", ")}`, matched)
+    : failCheck([`Required project type not found. Need one of: ${required.join(", ")}`], { observed_project_types: [...types] });
+}
+
+function checkUnsupportedProject(contract, project, inventory) {
+  if (!project) return passCheck("No project classification available for unsupported-route check.");
+  const types = projectTypes(project);
+  const rejected = contract.rejected_project_types_any || [];
+  const matched = rejected.filter((item) => types.has(lower(item)));
+  if (matched.length) return failCheck([`Unsupported project type matched: ${matched.join(", ")}`], { observed_project_types: [...types] });
+  if (isBrowserOnlyProject(project, inventory)) return failCheck(["Pure browser/browser-video project cannot use native NVIDIA SDKs directly."]);
+  return passCheck("No unsupported project type matched.");
+}
+
+function isBrowserOnlyProject(project, inventory) {
+  const types = projectTypes(project);
+  const platforms = (project?.target_platforms || []).map(lower);
+  const hasBrowserSignal = types.has("browser_extension") || types.has("browser_webgpu") || types.has("browser_video") || platforms.includes("browser");
+  if (!hasBrowserSignal) return false;
+  const text = inventoryText(inventory);
+  return !/(electron|native messaging|native_messaging|native helper|desktop_web_hybrid|ipc|preload)/i.test(text);
+}
+
+function checkGraphicsApis(contract, project) {
+  const required = contract.required_graphics_apis_any || [];
+  if (!required.length) return passCheck("No graphics API requirement.");
+  if (!project) return failCheck([`Graphics/API requirement cannot be checked without project inspection: ${required.join(", ")}`]);
+  const observed = new Set((project.graphics_apis || []).map(lower));
+  const languages = new Set((project.languages || []).map(lower));
+  if (languages.has("cuda")) observed.add("cuda");
+  const matched = required.filter((item) => observed.has(lower(item)));
+  return matched.length
+    ? passCheck(`Matched API(s): ${matched.join(", ")}`, matched)
+    : failCheck([`Required graphics/media API not found. Need one of: ${required.join(", ")}`], { observed_apis: [...observed] });
+}
+
+function checkContentPaths(contract, project) {
+  const required = contract.required_content_paths_any || [];
+  if (!required.length) return passCheck("No content-path requirement.");
+  if (!project) return failCheck([`Content-path requirement cannot be checked without project inspection: ${required.join(", ")}`]);
+  const observed = new Set((project.content_paths || []).map(lower));
+  const matched = required.filter((item) => observed.has(lower(item)));
+  return matched.length
+    ? passCheck(`Matched content path(s): ${matched.join(", ")}`, matched)
+    : failCheck([`Required content path not found. Need one of: ${required.join(", ")}`], { observed_content_paths: [...observed] });
+}
+
+function checkHeaderEvidence(contract, headerReport, inventory) {
+  const required = contract.required_header_evidence || [];
+  const projectHeaderRequirements = contract.required_project_header_evidence || [];
+  const missing = [];
+  const evidence = [];
+
+  for (const requirement of required) {
+    const matched = headerRequirementMatches(requirement, headerReport);
+    if (matched.ok) {
+      evidence.push(matched.evidence);
+    } else {
+      missing.push(matched.reason);
+    }
+  }
+
+  const text = inventoryText(inventory);
+  for (const requirement of projectHeaderRequirements) {
+    const matched = (requirement.tokens_any || []).filter((token) => text.includes(lower(token)));
+    if (matched.length) {
+      evidence.push({ description: requirement.description, matched_tokens: matched });
+    } else {
+      missing.push(`Missing project/header evidence: ${requirement.description || requirement.tokens_any?.join(", ")}`);
+    }
+  }
+
+  if (!required.length && !projectHeaderRequirements.length) return passCheck("No local header requirement.");
+  return missing.length ? failCheck(missing, { evidence }) : passCheck("Required local/project header evidence found.", evidence);
+}
+
+function headerRequirementMatches(requirement, headerReport) {
+  const findings = (headerReport.findings || []).filter((finding) => lower(finding.technology_id) === lower(requirement.technology_id));
+  if (!findings.length) {
+    return { ok: false, reason: `Missing local SDK/header evidence for ${requirement.technology_id}.` };
+  }
+
+  const headers = findings.map((finding) => lower(finding.relative_path || finding.path || ""));
+  const symbols = findings.flatMap((finding) => finding.symbols || []);
+  const haystack = lower(`${headers.join(" ")} ${symbols.join(" ")}`);
+  const headerMatched = !(requirement.headers_any || []).length || requirement.headers_any.some((header) => headers.some((value) => value.endsWith(lower(header)) || value.includes(lower(header))));
+  const symbolMatched = !(requirement.symbols_any || []).length || requirement.symbols_any.some((symbol) => haystack.includes(lower(symbol)));
+
+  if (!headerMatched) return { ok: false, reason: `Missing required header for ${requirement.technology_id}: ${requirement.headers_any.join(" or ")}` };
+  if (!symbolMatched) return { ok: false, reason: `Missing required symbol evidence for ${requirement.technology_id}: ${requirement.symbols_any.join(" or ")}` };
+  return {
+    ok: true,
+    evidence: {
+      technology_id: requirement.technology_id,
+      matched_headers: findings.map((finding) => finding.relative_path || finding.path).slice(0, 12),
+      sample_symbols: symbols.slice(0, 20)
+    }
+  };
+}
+
+function checkInputResources(contract, inventory) {
+  const resources = contract.required_input_resources || [];
+  if (!resources.length) return passCheck("No input resource requirement.");
+  if (!inventory) return failCheck(["Input resources cannot be checked without project inspection."]);
+  const text = inventoryText(inventory);
+  const missing = [];
+  const matchedResources = [];
+  for (const resource of resources) {
+    const matched = (resource.tokens_any || []).filter((token) => text.includes(lower(token)));
+    if (matched.length) {
+      matchedResources.push({ id: resource.id, matched_tokens: matched });
+    } else {
+      missing.push(`Missing required input resource: ${resource.id} (${resource.description})`);
+    }
+  }
+  return missing.length ? failCheck(missing, { matched_resources: matchedResources }) : passCheck("All required input resources were observed.", matchedResources);
+}
+
+function checkBuildSystem(contract, project) {
+  const required = contract.required_build_systems_any || [];
+  if (!required.length) return passCheck("No build-system requirement.");
+  if (!project) return failCheck([`Build-system requirement cannot be checked without project inspection: ${required.join(", ")}`]);
+  const observed = new Set((project.build_systems || []).map(lower));
+  const matched = required.filter((item) => observed.has(lower(item)));
+  return matched.length
+    ? passCheck(`Matched build system(s): ${matched.join(", ")}`, matched)
+    : failCheck([`Required build system not found. Need one of: ${required.join(", ")}`], { observed_build_systems: [...observed] });
+}
+
+function checkBuildCapabilities(contract, inventory) {
+  const capabilities = contract.required_build_system_capabilities || [];
+  if (!capabilities.length) return passCheck("No build capability requirement.");
+  if (!inventory) return failCheck(["Build capabilities cannot be checked without project inspection."]);
+  const text = inventoryText(inventory);
+  const missing = [];
+  const matchedCapabilities = [];
+  for (const capability of capabilities) {
+    const matched = (capability.tokens_any || []).filter((token) => text.includes(lower(token)));
+    if (matched.length) {
+      matchedCapabilities.push({ id: capability.id, matched_tokens: matched });
+    } else {
+      missing.push(`Missing build capability: ${capability.id} (${capability.description})`);
+    }
+  }
+  return missing.length ? failCheck(missing, { matched_capabilities: matchedCapabilities }) : passCheck("Required build-system capabilities were observed.", matchedCapabilities);
+}
+
+function checkRuntimeValidation(contract) {
+  const items = contract.required_runtime_validation || [];
+  return items.length ? passCheck("Runtime validation requirements are defined.", items) : failCheck(["No runtime validation requirements defined for this contract."]);
+}
+
+function checkContractSources(contract) {
+  const refs = sourceRefs(contract.source_ids);
+  return refs.length ? passCheck("Official source references are available.", refs) : failCheck(["Contract has no resolvable official source references."]);
+}
+
+function passCheck(summary, evidence = []) {
+  return { status: "pass", summary, evidence, missing: [] };
+}
+
+function failCheck(missing, evidence = {}) {
+  return { status: "fail", summary: missing[0] || "Check failed.", missing, evidence };
+}
+
+function projectTypes(project) {
+  const types = new Set();
+  if (project?.primary_type) types.add(lower(project.primary_type));
+  for (const item of project?.project_types || []) types.add(lower(item.name));
+  return types;
+}
+
+function inventoryText(inventory) {
+  if (!inventory) return "";
+  return lower([
+    ...inventory.files.map((file) => file.relative),
+    ...inventory.contentIndex.map((file) => `${file.relative}\n${file.text}`)
+  ].join("\n"));
+}
+
+function compileCommandForContract(contract, project) {
+  const systems = new Set((project?.build_systems || []).map(lower));
+  if (systems.has("cmake")) return "cmake -S <project_path> -B <build_dir> && cmake --build <build_dir>";
+  if (systems.has("msbuild/visual studio")) return "msbuild <solution-or-project>.sln /m";
+  if (systems.has("unreal build tool")) return "Run Unreal Build Tool for the project target, then validate editor and packaged logs.";
+  if (systems.has("python")) return "python -m pytest or project-specific Python validation harness";
+  if (systems.has("npm")) return "npm test or project-specific native-helper validation harness";
+  if (contract.id === "video-codec-nvenc-nvdec-pipeline") return "ffmpeg/gstreamer throughput harness after local tools and sample media are supplied";
+  return null;
+}
+
+function summarizeContractResults(results) {
+  const counts = {};
+  for (const result of results) counts[result.state] = (counts[result.state] || 0) + 1;
+  return {
+    total: results.length,
+    by_state: counts,
+    ready_for_patch_planning: results.filter((item) => item.state === "satisfied").map((item) => item.contract_id),
+    blocked: results.filter((item) => item.state !== "satisfied").map((item) => ({ contract_id: item.contract_id, state: item.state, blockers: item.blockers }))
+  };
+}
+
+const UNREAL_DLSS_SUPPORTED_ENGINE_VERSIONS = ["5.4", "5.5", "5.6", "5.7"];
+
+function buildUnrealDlssValidation(projectRoot, inventory, project, options = {}) {
+  const uproject = findUnrealProjectDescriptor(inventory);
+  const pluginDescriptors = findUnrealNvidiaPluginDescriptors(inventory);
+  const pluginEntries = findUnrealNvidiaProjectPluginEntries(uproject.json);
+  const configStatus = unrealConfigStatus(inventory);
+  const logs = unrealLogsToInspect(projectRoot, inventory, uproject);
+  const engineCompatibility = unrealEngineCompatibility(uproject, pluginDescriptors);
+  const pluginStatus = unrealPluginStatus(pluginDescriptors, pluginEntries);
+  const packaging = unrealPackagingStatus(inventory, pluginStatus, configStatus, logs, engineCompatibility);
+  const blockers = unrealValidationBlockers(uproject, pluginStatus, engineCompatibility);
+  const warnings = unrealValidationWarnings(configStatus, packaging, logs, pluginStatus);
+  const state = unrealValidationState(uproject, pluginStatus, engineCompatibility, configStatus);
+
+  const validationReport = {
+    state,
+    project_root: projectRoot,
+    uproject: uproject.path
+      ? {
+          path: uproject.path,
+          relative_path: uproject.relative_path,
+          engine_association: uproject.engine_association,
+          project_name: uproject.project_name
+        }
+      : null,
+    engine_compatibility: engineCompatibility,
+    plugin_status: pluginStatus,
+    config_status: configStatus,
+    packaging_risks: packaging,
+    logs_to_inspect: logs,
+    blockers,
+    warnings,
+    observed_project_type: project?.primary_type || "unknown",
+    source_evidence: sourceRefs(["nvidia-dlss", "streamline-releases"])
+  };
+  const safePatchPlan = options.includePatchPlan === false ? null : unrealSafePatchPlan(validationReport);
+  return {
+    validation_report: validationReport,
+    safe_patch_plan: safePatchPlan,
+    artifacts: unrealValidationArtifacts(validationReport, safePatchPlan)
+  };
+}
+
+function findUnrealProjectDescriptor(inventory) {
+  const file = inventory.files.find((item) => /\.uproject$/i.test(item.name));
+  if (!file) {
+    return {
+      path: null,
+      relative_path: null,
+      project_name: null,
+      json: null,
+      engine_association: null
+    };
+  }
+  const json = safeJson(file.full);
+  return {
+    path: file.full,
+    relative_path: file.relative,
+    project_name: file.name.replace(/\.uproject$/i, ""),
+    json,
+    engine_association: json?.EngineAssociation || json?.EngineVersion || null
+  };
+}
+
+function findUnrealNvidiaPluginDescriptors(inventory) {
+  return inventory.files
+    .filter((file) => /\.uplugin$/i.test(file.name))
+    .map((file) => {
+      const json = safeJson(file.full);
+      const descriptorText = lower(`${file.relative} ${file.name} ${json?.FriendlyName || ""} ${json?.Description || ""}`);
+      const nvidiaRelevant = /nvidia|dlss|streamline|reflex|ngx|nis/.test(descriptorText);
+      return {
+        path: file.full,
+        relative_path: file.relative,
+        name: file.name.replace(/\.uplugin$/i, ""),
+        friendly_name: json?.FriendlyName || null,
+        version_name: json?.VersionName || null,
+        version: json?.Version || null,
+        engine_version: json?.EngineVersion || null,
+        installed: nvidiaRelevant,
+        descriptor_parse_state: json ? "parsed" : "unreadable_or_invalid_json"
+      };
+    })
+    .filter((item) => item.installed);
+}
+
+function findUnrealNvidiaProjectPluginEntries(projectJson) {
+  return normalizeArray(projectJson?.Plugins)
+    .filter((entry) => /nvidia|dlss|streamline|reflex|ngx|nis/i.test(`${entry?.Name || ""} ${entry?.MarketplaceURL || ""}`))
+    .map((entry) => ({
+      name: entry.Name || null,
+      enabled: entry.Enabled === true,
+      marketplace_url_present: Boolean(entry.MarketplaceURL),
+      raw: entry
+    }));
+}
+
+function unrealPluginStatus(pluginDescriptors, pluginEntries) {
+  const installed = pluginDescriptors.length > 0;
+  const enabledEntries = pluginEntries.filter((entry) => entry.enabled);
+  const disabledEntries = pluginEntries.filter((entry) => entry.enabled === false);
+  const referencedNames = new Set(pluginEntries.map((entry) => lower(entry.name)));
+  const unreferencedDescriptors = pluginDescriptors.filter((descriptor) => !referencedNames.has(lower(descriptor.name)));
+  const state = !installed
+    ? "plugin_missing"
+    : !pluginEntries.length
+      ? "plugin_installed_project_reference_missing"
+      : disabledEntries.length && !enabledEntries.length
+        ? "plugin_referenced_but_disabled"
+        : "plugin_installed_and_referenced";
+  return {
+    state,
+    installed,
+    plugin_descriptors: pluginDescriptors,
+    project_plugin_entries: pluginEntries,
+    enabled_entries: enabledEntries,
+    disabled_entries: disabledEntries,
+    unreferenced_descriptors: unreferencedDescriptors,
+    missing: installed ? [] : ["No NVIDIA/DLSS/Streamline/Reflex .uplugin descriptor was found under the project."]
+  };
+}
+
+function unrealEngineCompatibility(uproject, pluginDescriptors) {
+  const normalized = normalizeUnrealEngineVersion(uproject.engine_association);
+  const descriptorVersions = pluginDescriptors.map((descriptor) => normalizeUnrealEngineVersion(descriptor.engine_version)).filter(Boolean);
+  const descriptorMismatch = descriptorVersions.some((version) => normalized && version !== normalized);
+  const knownSupported = normalized && UNREAL_DLSS_SUPPORTED_ENGINE_VERSIONS.includes(normalized);
+  const state = !normalized
+    ? "unknown"
+    : descriptorMismatch
+      ? "plugin_engine_version_mismatch"
+      : knownSupported
+        ? "known_supported"
+        : "not_in_current_supported_list";
+  return {
+    state,
+    engine_version: uproject.engine_association || null,
+    normalized_engine_version: normalized,
+    supported_engine_versions_from_registry: UNREAL_DLSS_SUPPORTED_ENGINE_VERSIONS,
+    plugin_descriptor_engine_versions: descriptorVersions,
+    evidence_source: "NVIDIA DLSS Developer Page registry entry verified 2026-04-30",
+    assumptions: [
+      "Compatibility is version-list based; local official plugin release notes should be checked before implementation.",
+      "Custom Unreal engine forks require separate inspection."
+    ]
+  };
+}
+
+function unrealConfigStatus(inventory) {
+  const configFiles = inventory.files.filter((file) => /^Config[\\/].*\.ini$/i.test(file.relative));
+  const hits = [];
+  for (const file of inventory.contentIndex) {
+    if (!/^Config[\\/].*\.ini$/i.test(file.relative)) continue;
+    const lines = file.text.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      if (/dlss|streamline|nvidia|reflex|ngx|r\.ng[xl]|r\.dlss|r\.streamline/i.test(line)) {
+        hits.push({ file: file.full, relative_path: file.relative, line: index + 1, text: line.trim() });
+      }
+    });
+  }
+  return {
+    state: hits.length ? "config_present" : "config_missing",
+    config_files: configFiles.map((file) => ({ path: file.full, relative_path: file.relative })),
+    nvidia_config_hits: hits.slice(0, 80),
+    suggestions: [
+      "Keep any NVIDIA plugin settings in Config/*.ini as a small, reviewable diff.",
+      "Use the official plugin documentation for exact setting names; do not invent console variables.",
+      "Validate editor and packaged builds separately after config changes."
+    ]
+  };
+}
+
+function unrealPackagingStatus(inventory, pluginStatus, configStatus, logs, engineCompatibility) {
+  const hints = [];
+  const binaryCandidates = [];
+  for (const file of inventory.files) {
+    const rel = file.relative.replaceAll("\\", "/");
+    if (/Config\/DefaultGame\.ini$/i.test(rel) || /ProjectPackagingSettings|Packaging|Shipping|StagedBuilds|WindowsNoEditor|Target\.cs$/i.test(rel)) {
+      hints.push({ path: file.full, relative_path: file.relative, reason: "packaging-related file/path" });
+    }
+    if (/(sl\.interposer|sl\.dlss|sl\.dlss_g|nvngx_dlss|streamline|reflex).*\.(dll|so|dylib)$/i.test(file.name)) {
+      binaryCandidates.push({ path: file.full, relative_path: file.relative });
+    }
+  }
+  for (const file of inventory.contentIndex) {
+    if (/ProjectPackagingSettings|ForDistribution|BuildConfiguration|StagingDirectory|DirectoriesToAlwaysStage/i.test(file.text)) {
+      hints.push({ path: file.full, relative_path: file.relative, reason: "packaging setting text" });
+    }
+  }
+
+  const risks = [];
+  if (!pluginStatus.installed) risks.push("Plugin missing; packaged-build state cannot be validated.");
+  if (pluginStatus.state === "plugin_installed_project_reference_missing") risks.push("Plugin folder exists but .uproject reference is missing; packaged builds may not load it.");
+  if (pluginStatus.state === "plugin_referenced_but_disabled") risks.push("NVIDIA plugin entries are present but disabled.");
+  if (engineCompatibility.state.includes("mismatch") || engineCompatibility.state === "not_in_current_supported_list") risks.push("Engine version compatibility is not known-supported by the current registry baseline.");
+  if (configStatus.state === "config_missing") risks.push("No NVIDIA/DLSS/Streamline config entries were observed.");
+  if (!hints.length) risks.push("No packaged-build settings or staged-build hints were observed.");
+  if (!logs.existing_logs.length) risks.push("No existing Unreal logs were found; editor and packaged-build logs still need inspection.");
+  if (pluginStatus.installed && !binaryCandidates.length) risks.push("No NVIDIA runtime binary candidates were observed; do not copy binaries without license and production-library review.");
+
+  return {
+    state: risks.length ? "risks_present" : "no_immediate_packaging_risks_observed",
+    hints: dedupeByPathReason(hints).slice(0, 50),
+    binary_candidates: binaryCandidates.slice(0, 50),
+    risks: [...new Set(risks)]
+  };
+}
+
+function unrealLogsToInspect(projectRoot, inventory, uproject) {
+  const existingLogs = inventory.files
+    .filter((file) => /(^|[\\/])Saved[\\/]Logs[\\/].*\.log$/i.test(file.relative) || /\.log$/i.test(file.name) && /unreal|dlss|streamline|nvidia|reflex/i.test(file.relative))
+    .map((file) => ({ path: file.full, relative_path: file.relative }));
+  const projectName = uproject.project_name || "<ProjectName>";
+  return {
+    existing_logs: existingLogs,
+    expected_logs: [
+      join(projectRoot, "Saved", "Logs", `${projectName}.log`),
+      join(projectRoot, "Saved", "Logs"),
+      "Packaged build Saved/Logs directory for the target platform",
+      "AutomationTool/UnrealBuildTool package logs from the build machine"
+    ],
+    inspect_for: [
+      "NVIDIA/DLSS/Streamline plugin load lines",
+      "plugin missing, incompatible, or disabled messages",
+      "feature support and runtime availability messages",
+      "packaged-build staging or binary load failures"
+    ]
+  };
+}
+
+function unrealValidationBlockers(uproject, pluginStatus, engineCompatibility) {
+  const blockers = [];
+  if (!uproject.path) blockers.push("No .uproject file was found.");
+  if (!pluginStatus.installed) blockers.push("NVIDIA DLSS/Streamline Unreal plugin is not installed in the project.");
+  if (pluginStatus.state === "plugin_referenced_but_disabled") blockers.push("NVIDIA plugin entries are disabled in .uproject.");
+  if (engineCompatibility.state === "plugin_engine_version_mismatch" || engineCompatibility.state === "not_in_current_supported_list") {
+    blockers.push("Engine version compatibility is blocked or unknown until the matching official NVIDIA plugin package is confirmed.");
+  }
+  return blockers;
+}
+
+function unrealValidationWarnings(configStatus, packaging, logs, pluginStatus) {
+  const warnings = [];
+  if (pluginStatus.state === "plugin_installed_project_reference_missing") warnings.push("Plugin files are present but .uproject does not reference them.");
+  if (configStatus.state === "config_missing") warnings.push("No NVIDIA config entries were observed.");
+  warnings.push(...packaging.risks);
+  if (!logs.existing_logs.length) warnings.push("Logs are not present yet; run editor and packaged-build validation before claiming readiness.");
+  return [...new Set(warnings)];
+}
+
+function unrealValidationState(uproject, pluginStatus, engineCompatibility, configStatus) {
+  if (!uproject.path) return "not_unreal_project";
+  if (engineCompatibility.state === "plugin_engine_version_mismatch" || engineCompatibility.state === "not_in_current_supported_list") return "engine_version_mismatch";
+  if (!pluginStatus.installed) return "plugin_missing";
+  if (pluginStatus.state !== "plugin_installed_and_referenced") return pluginStatus.state;
+  if (configStatus.state === "config_missing") return "plugin_present_config_missing";
+  return "plugin_present_configured";
+}
+
+function unrealSafePatchPlan(report) {
+  const steps = [
+    patchStep("Preserve current Unreal project state", [report.uproject?.relative_path || "*.uproject", "Config/*.ini"], "Record the current .uproject plugin entries, Config/*.ini state, and log baseline before any later edits.", ["Plan only; do not edit files from validation output."])
+  ];
+  if (report.plugin_status.state === "plugin_missing") {
+    steps.push(
+      patchStep("Block plugin enablement until official plugin is supplied", ["Plugins/**"], "Ask the user to provide/install the official NVIDIA Unreal plugin that matches the detected UE version. This plugin will not download it.", ["No downloads.", "No NVIDIA binary copying.", "Do not add fake .uproject plugin references."])
+    );
+  } else if (report.plugin_status.state === "plugin_installed_project_reference_missing") {
+    steps.push(
+      patchStep("Plan .uproject plugin references", [report.uproject?.relative_path || "*.uproject"], `Add explicit plugin entries for observed descriptors: ${report.plugin_status.plugin_descriptors.map((item) => item.name).join(", ")}.`, ["Patch plan only; use a separate approved edit.", "Keep JSON formatting stable.", "Do not move plugin files or binaries."])
+    );
+  } else if (report.plugin_status.state === "plugin_referenced_but_disabled") {
+    steps.push(
+      patchStep("Plan enabling existing plugin references", [report.uproject?.relative_path || "*.uproject"], "Flip only the existing NVIDIA plugin entries from Enabled=false to Enabled=true after user approval.", ["Do not add unrelated plugins.", "Keep this as a single reviewable project descriptor diff."])
+    );
+  }
+  if (report.config_status.state === "config_missing") {
+    steps.push(
+      patchStep("Plan config suggestions", ["Config/DefaultEngine.ini", "Config/DefaultGame.ini"], "Add only source-verified NVIDIA plugin settings after the exact installed plugin documentation is inspected.", ["Do not invent console variables.", "Config changes must be separately validated in editor and packaged build."])
+    );
+  } else {
+    steps.push(
+      patchStep("Review existing NVIDIA config", report.config_status.config_files.map((file) => file.relative_path), "Verify observed NVIDIA/DLSS/Streamline config entries match the installed plugin docs and target packaging mode.", ["Do not normalize or rewrite unrelated .ini sections."])
+    );
+  }
+  steps.push(
+    patchStep("Add validation docs/scripts", ["tools/nvidia/validate-unreal-dlss-project.ps1", "docs/nvidia/unreal-dlss-validation-report.md"], "Create read-only validation artifacts that inspect plugin/config/log state without modifying Unreal project files.", ["Writes require approval_token=APPROVED_UNREAL_DLSS_VALIDATION.", "Artifacts are create-only and never overwrite existing files."]),
+    patchStep("Validate editor and packaged logs", ["Saved/Logs", "packaged build logs"], "Run editor startup and packaged-build validation, then inspect logs for plugin load, compatibility, and binary staging messages.", ["No readiness claim without logs."])
+  );
+  return {
+    state: "plan_only_requires_approval",
+    writes_require_approval: true,
+    approval_token_for_artifacts: "APPROVED_UNREAL_DLSS_VALIDATION",
+    steps
+  };
+}
+
+function unrealValidationArtifacts(report, safePatchPlan) {
+  return [
+    scaffoldFile(
+      "tools/nvidia/validate-unreal-dlss-project.ps1",
+      "powershell",
+      "Read-only Unreal DLSS/Streamline plugin validation helper.",
+      unrealDlssProjectValidationScript()
+    ),
+    scaffoldFile(
+      "docs/nvidia/unreal-dlss-validation-report.md",
+      "markdown",
+      "Generated validation report template for Unreal DLSS plugin readiness.",
+      unrealDlssValidationMarkdown(report, safePatchPlan)
+    )
+  ];
+}
+
+function writeUnrealValidationArtifacts(artifacts, projectRoot, args) {
+  if (args.write_files !== true) return [];
+  if (args.approval_token !== "APPROVED_UNREAL_DLSS_VALIDATION") {
+    throw new McpError(-32602, "write_files requires approval_token=APPROVED_UNREAL_DLSS_VALIDATION");
+  }
+  const base = args.output_dir ? resolveInputPath(args.output_dir) : join(projectRoot, "_nvidia_unreal_dlss_validation");
+  mkdirSync(base, { recursive: true });
+  const written = [];
+  for (const artifact of artifacts || []) {
+    const relative = sanitizeRelativeOutputPath(artifact.relative_path);
+    const target = resolve(base, relative);
+    if (!isWithinPath(target, base)) throw new McpError(-32602, `Refusing to write outside output directory: ${artifact.relative_path}`);
+    if (existsSync(target)) {
+      written.push({ path: target, status: "skipped_existing", reason: "Existing validation artifacts are never overwritten." });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, artifact.content, "utf8");
+    written.push({ path: target, status: "created" });
+  }
+  return written;
+}
+
+function normalizeUnrealEngineVersion(value) {
+  const match = String(value || "").match(/(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}` : null;
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function dedupeByPathReason(items) {
+  const seen = new Set();
+  const output = [];
+  for (const item of items) {
+    const key = `${item.relative_path || item.path}:${item.reason}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+}
+
+const UNITY_HDRP_MIN_DLSS_VERSION = { major: 2021, minor: 2, label: "2021.2" };
+
+function buildUnityHdrpValidation(projectRoot, inventory, project, options = {}) {
+  const unityVersion = findUnityVersion(inventory);
+  const packages = findUnityPackages(inventory);
+  const renderPipeline = findUnityRenderPipelineEvidence(inventory);
+  const nvidiaSettings = findUnityNvidiaSettings(inventory);
+  const reflexReadiness = findUnityReflexReadiness(inventory, nvidiaSettings);
+  const route = classifyUnityDlssRoute(unityVersion, packages, renderPipeline);
+  const blockers = unityValidationBlockers(route, unityVersion, packages, renderPipeline);
+  const warnings = unityValidationWarnings(route, renderPipeline, nvidiaSettings, reflexReadiness);
+  const validationReport = {
+    state: route.state,
+    route,
+    project_root: projectRoot,
+    unity_version: unityVersion,
+    package_status: packages,
+    render_pipeline_hints: renderPipeline,
+    nvidia_dlss_settings: nvidiaSettings,
+    reflex_readiness: reflexReadiness,
+    project_settings_to_inspect: unityProjectSettingsToInspect(projectRoot, inventory),
+    camera_and_render_pipeline_requirements: unityCameraRenderPipelineRequirements(route),
+    blockers,
+    warnings,
+    no_fake_metrics_policy: [
+      "No FPS, frame-time, latency, or profiler result is reported unless it comes from a runnable Unity validation path.",
+      "Static readiness is not runtime success."
+    ],
+    observed_project_type: project?.primary_type || "unknown",
+    source_evidence: sourceRefs(["nvidia-dlss", "nvidia-reflex"])
+  };
+  const safePatchPlan = options.includePatchPlan === false ? null : unitySafePatchPlan(validationReport);
+  return {
+    validation_report: validationReport,
+    safe_patch_plan: safePatchPlan,
+    artifacts: unityValidationArtifacts(validationReport, safePatchPlan)
+  };
+}
+
+function findUnityVersion(inventory) {
+  const versionFile = inventory.contentIndex.find((file) => /ProjectSettings[\\/]ProjectVersion\.txt$/i.test(file.relative));
+  const text = versionFile?.text || "";
+  const match = text.match(/m_EditorVersion:\s*([^\r\n]+)/i);
+  const raw = match?.[1]?.trim() || null;
+  const parsed = parseUnityVersion(raw);
+  return {
+    state: raw ? "detected" : "missing",
+    file: versionFile ? { path: versionFile.full, relative_path: versionFile.relative } : null,
+    raw,
+    major: parsed?.major || null,
+    minor: parsed?.minor || null,
+    patch: parsed?.patch || null,
+    normalized: parsed ? `${parsed.major}.${parsed.minor}` : null
+  };
+}
+
+function parseUnityVersion(value) {
+  const match = String(value || "").match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3])
+  };
+}
+
+function findUnityPackages(inventory) {
+  const manifestFile = inventory.files.find((file) => /Packages[\\/]manifest\.json$/i.test(file.relative));
+  const manifest = manifestFile ? safeJson(manifestFile.full) : null;
+  const dependencies = manifest?.dependencies || {};
+  const hdrpVersion = dependencies["com.unity.render-pipelines.high-definition"] || null;
+  const urpVersion = dependencies["com.unity.render-pipelines.universal"] || null;
+  const coreVersion = dependencies["com.unity.render-pipelines.core"] || null;
+  return {
+    manifest: manifestFile ? { path: manifestFile.full, relative_path: manifestFile.relative, parse_state: manifest ? "parsed" : "unreadable_or_invalid_json" } : null,
+    hdrp: {
+      present: Boolean(hdrpVersion),
+      package: "com.unity.render-pipelines.high-definition",
+      version: hdrpVersion
+    },
+    urp: {
+      present: Boolean(urpVersion),
+      package: "com.unity.render-pipelines.universal",
+      version: urpVersion
+    },
+    core: {
+      present: Boolean(coreVersion),
+      package: "com.unity.render-pipelines.core",
+      version: coreVersion
+    }
+  };
+}
+
+function findUnityRenderPipelineEvidence(inventory) {
+  const hints = [];
+  const pipelineFiles = [];
+  const cameraHints = [];
+  for (const file of inventory.contentIndex) {
+    const rel = file.relative.replaceAll("\\", "/");
+    const isUnitySurface = /^(ProjectSettings|Assets)\//i.test(rel);
+    if (!isUnitySurface) continue;
+    const lines = file.text.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (/HDRenderPipeline|HighDefinitionRenderPipeline|HDRP|m_RenderPipeline|RenderPipelineAsset|GraphicsSettings|QualitySettings|DynamicResolution/i.test(trimmed)) {
+        hints.push({ file: file.full, relative_path: file.relative, line: index + 1, text: trimmed });
+      }
+      if (/Camera|HDAdditionalCameraData|allowDynamicResolution|deepLearning|DLSS|antiAliasing/i.test(trimmed)) {
+        cameraHints.push({ file: file.full, relative_path: file.relative, line: index + 1, text: trimmed });
+      }
+    });
+  }
+  for (const file of inventory.files) {
+    if (/HDRenderPipeline|HighDefinition|HDRP|RenderPipeline|GraphicsSettings|QualitySettings/i.test(file.relative)) {
+      pipelineFiles.push({ path: file.full, relative_path: file.relative });
+    }
+  }
+  return {
+    state: hints.length || pipelineFiles.length ? "render_pipeline_hints_present" : "render_pipeline_hints_missing",
+    hints: hints.slice(0, 80),
+    pipeline_files: pipelineFiles.slice(0, 50),
+    camera_hints: cameraHints.slice(0, 80)
+  };
+}
+
+function findUnityNvidiaSettings(inventory) {
+  const hits = [];
+  for (const file of inventory.contentIndex) {
+    const rel = file.relative.replaceAll("\\", "/");
+    if (!/^(ProjectSettings|Assets|Packages)\//i.test(rel)) continue;
+    const lines = file.text.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (/NVIDIA|DLSS|DeepLearningSuperSampling|Reflex|low latency|frame generation/i.test(trimmed)) {
+        hits.push({ file: file.full, relative_path: file.relative, line: index + 1, text: trimmed });
+      }
+    });
+  }
+  return {
+    state: hits.length ? "settings_or_code_hints_present" : "settings_not_observed",
+    hits: hits.slice(0, 80),
+    caveat: "Static text hits are not proof that DLSS or Reflex works at runtime."
+  };
+}
+
+function findUnityReflexReadiness(inventory, nvidiaSettings) {
+  const markers = [];
+  for (const file of inventory.contentIndex) {
+    const rel = file.relative.replaceAll("\\", "/");
+    if (!/^(Assets|Packages|ProjectSettings)\//i.test(rel)) continue;
+    const lines = file.text.split(/\r?\n/);
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      if (/Reflex|latency|low latency|marker|input sample|simulation|render submit|present/i.test(trimmed)) {
+        markers.push({ file: file.full, relative_path: file.relative, line: index + 1, text: trimmed });
+      }
+    });
+  }
+  return {
+    state: markers.length || /reflex/i.test(JSON.stringify(nvidiaSettings.hits || [])) ? "reflex_hints_present" : "needs_intent_and_marker_inspection",
+    markers: markers.slice(0, 80),
+    requirements: [
+      "Only plan Reflex if latency is a user goal or Frame Generation/latency-sensitive interaction is in scope.",
+      "Do not claim latency improvement without measured Unity/runtime validation artifacts.",
+      "Identify input, simulation, render, present, and frame-end boundaries before marker work."
+    ]
+  };
+}
+
+function classifyUnityDlssRoute(unityVersion, packages, renderPipeline) {
+  const versionSupported = unityVersion.major !== null && unityVersionAtLeast(unityVersion, UNITY_HDRP_MIN_DLSS_VERSION);
+  if (packages.hdrp.present && versionSupported) {
+    return {
+      state: "unity_hdrp_supported_route",
+      recommended_route: "Unity HDRP DLSS readiness",
+      reason: "HDRP package is present and Unity version is at or above the plugin baseline for HDRP DLSS routing."
+    };
+  }
+  if (packages.hdrp.present && unityVersion.state === "missing") {
+    return {
+      state: "unsupported_unknown_route",
+      recommended_route: "blocked_until_unity_version_is_observed",
+      reason: "HDRP is present, but ProjectSettings/ProjectVersion.txt or m_EditorVersion was not observed."
+    };
+  }
+  if (packages.hdrp.present && !versionSupported) {
+    return {
+      state: "version_mismatch",
+      recommended_route: "blocked_until_unity_hdrp_version_review",
+      reason: `HDRP is present, but Unity ${unityVersion.raw || "unknown"} is below the ${UNITY_HDRP_MIN_DLSS_VERSION.label}+ baseline used by this plugin.`
+    };
+  }
+  if (packages.urp.present || /universal/i.test(JSON.stringify(renderPipeline))) {
+    return {
+      state: "urp_custom_srp_advanced_route",
+      recommended_route: "advanced_custom_srp_inspection",
+      reason: "URP/custom SRP is not the first-class HDRP DLSS route; feasibility requires render-pipeline and native-plugin inspection."
+    };
+  }
+  return {
+    state: "unsupported_unknown_route",
+    recommended_route: "inspect_project_before_dlss_claims",
+    reason: "HDRP was not detected, so this plugin cannot classify the project as ready for Unity HDRP DLSS planning."
+  };
+}
+
+function unityVersionAtLeast(unityVersion, minimum) {
+  if (unityVersion.major === null || unityVersion.minor === null) return false;
+  if (unityVersion.major > minimum.major) return true;
+  if (unityVersion.major < minimum.major) return false;
+  return unityVersion.minor >= minimum.minor;
+}
+
+function unityValidationBlockers(route, unityVersion, packages, renderPipeline) {
+  const blockers = [];
+  if (unityVersion.state === "missing") blockers.push("ProjectSettings/ProjectVersion.txt or m_EditorVersion was not found.");
+  if (route.state === "version_mismatch") blockers.push(`Unity version is below the ${UNITY_HDRP_MIN_DLSS_VERSION.label}+ HDRP DLSS baseline used by this plugin.`);
+  if (route.state === "unsupported_unknown_route") blockers.push("HDRP package was not detected in Packages/manifest.json.");
+  if (route.state === "urp_custom_srp_advanced_route") blockers.push("URP/custom SRP route requires advanced render-pipeline inspection before DLSS feasibility claims.");
+  if (packages.hdrp.present && renderPipeline.state === "render_pipeline_hints_missing") blockers.push("HDRP package is present, but render pipeline asset/settings evidence was not observed.");
+  return blockers;
+}
+
+function unityValidationWarnings(route, renderPipeline, nvidiaSettings, reflexReadiness) {
+  const warnings = [];
+  if (renderPipeline.state === "render_pipeline_hints_missing") warnings.push("Render pipeline asset/settings hints were not observed.");
+  if (!renderPipeline.camera_hints.length) warnings.push("Camera/HDRP camera settings were not observed.");
+  if (nvidiaSettings.state === "settings_not_observed") warnings.push("No NVIDIA/DLSS settings or code hints were observed.");
+  if (reflexReadiness.state === "needs_intent_and_marker_inspection") warnings.push("Reflex readiness requires user intent and marker-boundary inspection.");
+  if (route.state !== "unity_hdrp_supported_route") warnings.push(route.reason);
+  warnings.push("No FPS, profiler, or runtime success data is produced by static validation.");
+  return [...new Set(warnings)];
+}
+
+function unityProjectSettingsToInspect(projectRoot, inventory) {
+  const expected = [
+    "ProjectSettings/ProjectVersion.txt",
+    "Packages/manifest.json",
+    "ProjectSettings/GraphicsSettings.asset",
+    "ProjectSettings/QualitySettings.asset",
+    "Assets/**/*.asset",
+    "Assets/**/*.unity",
+    "Assets/**/*.cs"
+  ];
+  return expected.map((pattern) => {
+    const direct = pattern.includes("*") ? null : join(projectRoot, ...pattern.split("/"));
+    const exists = direct ? existsSync(direct) : inventory.files.some((file) => wildcardUnityPatternMatch(file.relative, pattern));
+    return { pattern, exists };
+  });
+}
+
+function wildcardUnityPatternMatch(relative, pattern) {
+  const rel = relative.replaceAll("\\", "/");
+  if (pattern === "Assets/**/*.asset") return /^Assets\/.*\.asset$/i.test(rel);
+  if (pattern === "Assets/**/*.unity") return /^Assets\/.*\.unity$/i.test(rel);
+  if (pattern === "Assets/**/*.cs") return /^Assets\/.*\.cs$/i.test(rel);
+  return false;
+}
+
+function unityCameraRenderPipelineRequirements(route) {
+  return [
+    "Confirm the active render pipeline asset is HDRP for every target quality level.",
+    "Inspect HDRP asset and camera settings for DLSS/dynamic-resolution prerequisites using Unity/NVIDIA docs for the detected versions.",
+    "Select representative scenes and cameras for validation; static inspection is not enough.",
+    "If route is URP/custom SRP, stop before claiming DLSS support and inspect the custom render pipeline/native plugin path.",
+    "For Reflex, identify latency-sensitive interactions and marker boundaries before adding any integration."
+  ].map((item) => ({
+    requirement: item,
+    applies: route.state === "unity_hdrp_supported_route" || /URP|custom|Reflex|route/i.test(item)
+  }));
+}
+
+function unitySafePatchPlan(report) {
+  const steps = [
+    patchStep("Preserve current Unity project state", ["ProjectSettings/ProjectVersion.txt", "Packages/manifest.json", "ProjectSettings/*.asset"], "Record Unity version, packages, render pipeline assets, quality settings, scenes, and current NVIDIA/DLSS hints before later edits.", ["Plan only; do not edit Unity serialized files from validation output."]),
+    patchStep("Inspect HDRP package and render pipeline asset", ["Packages/manifest.json", "ProjectSettings/GraphicsSettings.asset", "ProjectSettings/QualitySettings.asset", "Assets/**/*.asset"], "Verify HDRP is active in project and quality settings for target scenes.", ["Do not mutate serialized assets until the exact asset references are reviewed."])
+  ];
+  if (report.route.state === "unity_hdrp_supported_route") {
+    steps.push(
+      patchStep("Plan HDRP DLSS readiness checks", ["HDRP asset", "camera settings", "dynamic resolution settings", "representative scenes"], "Define non-mutating checks for HDRP DLSS prerequisites, camera settings, dynamic resolution, and target scene coverage.", ["No runtime success claim until Unity validation can run."])
+    );
+  } else if (report.route.state === "urp_custom_srp_advanced_route") {
+    steps.push(
+      patchStep("Block first-class HDRP patching", ["Packages/manifest.json", "Assets/**/*.asset", "Assets/**/*.cs"], "Route to advanced URP/custom SRP feasibility inspection instead of HDRP DLSS config edits.", ["Do not claim native HDRP DLSS support for URP/custom SRP."])
+    );
+  } else {
+    steps.push(
+      patchStep("Block DLSS readiness claim", ["Packages/manifest.json", "ProjectSettings/ProjectVersion.txt"], "Resolve Unity/HDRP version or missing HDRP package before DLSS-specific patch planning.", ["Do not add fake NVIDIA settings."])
+    );
+  }
+  steps.push(
+    patchStep("Plan Reflex readiness only when relevant", ["Assets/**/*.cs", "camera/controller scripts", "input/render loop boundaries"], "If latency matters, identify input, simulation, render, present, and frame-end boundaries for future Reflex validation.", ["No latency or FPS claims without measured artifacts."]),
+    patchStep("Add validation docs/scripts", ["tools/nvidia/validate-unity-hdrp-dlss-project.ps1", "docs/nvidia/unity-hdrp-dlss-validation-report.md"], "Create read-only validation artifacts that inspect Unity version, HDRP package, render pipeline hints, NVIDIA settings, and logs.", ["Writes require approval_token=APPROVED_UNITY_HDRP_VALIDATION.", "Artifacts are create-only and never overwrite existing files."])
+  );
+  return {
+    state: "plan_only_requires_approval",
+    writes_require_approval: true,
+    approval_token_for_artifacts: "APPROVED_UNITY_HDRP_VALIDATION",
+    steps
+  };
+}
+
+function unityValidationArtifacts(report, safePatchPlan) {
+  return [
+    scaffoldFile(
+      "tools/nvidia/validate-unity-hdrp-dlss-project.ps1",
+      "powershell",
+      "Read-only Unity HDRP DLSS readiness validation helper.",
+      unityHdrpValidationScript()
+    ),
+    scaffoldFile(
+      "docs/nvidia/unity-hdrp-dlss-validation-report.md",
+      "markdown",
+      "Generated validation report template for Unity HDRP DLSS readiness.",
+      unityHdrpValidationMarkdown(report, safePatchPlan)
+    )
+  ];
+}
+
+function writeUnityValidationArtifacts(artifacts, projectRoot, args) {
+  if (args.write_files !== true) return [];
+  if (args.approval_token !== "APPROVED_UNITY_HDRP_VALIDATION") {
+    throw new McpError(-32602, "write_files requires approval_token=APPROVED_UNITY_HDRP_VALIDATION");
+  }
+  const base = args.output_dir ? resolveInputPath(args.output_dir) : join(projectRoot, "_nvidia_unity_hdrp_validation");
+  mkdirSync(base, { recursive: true });
+  const written = [];
+  for (const artifact of artifacts || []) {
+    const relative = sanitizeRelativeOutputPath(artifact.relative_path);
+    const target = resolve(base, relative);
+    if (!isWithinPath(target, base)) throw new McpError(-32602, `Refusing to write outside output directory: ${artifact.relative_path}`);
+    if (existsSync(target)) {
+      written.push({ path: target, status: "skipped_existing", reason: "Existing validation artifacts are never overwritten." });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, artifact.content, "utf8");
+    written.push({ path: target, status: "created" });
+  }
+  return written;
+}
+
 function buildPhase2Context(args) {
   const root = args.project_path ? resolveInputPath(args.project_path) : null;
   const inventory = root
@@ -1655,6 +3435,19 @@ function buildPhase2Context(args) {
   const tech = findTechnology(primaryRoute.technology_id);
   const requirements = tech ? requirementsReport(tech, args, project, null) : null;
   const workflow = normalizePhase2Workflow(args.target_workflow, args.goal, project, primaryRoute);
+  const sdkRoots = headerGroundingRoots(args, root);
+  const headerGrounding = buildContextHeaderGrounding({
+    technologyId: primaryRoute.technology_id,
+    workflow,
+    roots: sdkRoots,
+    maxFiles: args.max_files
+  });
+  const unrealValidation = workflow === "unreal" && root
+    ? buildUnrealDlssValidation(root, inventory, project, { includePatchPlan: true })
+    : null;
+  const unityHdrpValidation = workflow === "unity-hdrp" && root
+    ? buildUnityHdrpValidation(root, inventory, project, { includePatchPlan: true })
+    : null;
 
   return {
     goal: args.goal,
@@ -1666,7 +3459,11 @@ function buildPhase2Context(args) {
     tech,
     technologyId: primaryRoute.technology_id,
     requirements,
-    workflow
+    workflow,
+    sdkRoots,
+    headerGrounding,
+    unrealValidation,
+    unityHdrpValidation
   };
 }
 
@@ -1689,6 +3486,91 @@ function normalizePhase2Workflow(requested, goal, project, primaryRoute) {
   if (["dlss-streamline", "reflex", "rtx-kit"].includes(primaryRoute?.technology_id)) return "custom-cpp-renderer";
   if (["optical-flow-fruc", "web-boundary"].includes(primaryRoute?.technology_id)) return "web-electron";
   return "custom-cpp-renderer";
+}
+
+function headerGroundingRoots(args, projectRoot) {
+  const roots = new Set();
+  for (const value of normalizeStringList(args.sdk_roots)) roots.add(resolveInputPath(value));
+  if (args.sdk_root) roots.add(resolveInputPath(args.sdk_root));
+  if (projectRoot) roots.add(projectRoot);
+  return [...roots].filter((root) => root && existsSync(root));
+}
+
+function buildContextHeaderGrounding({ technologyId, workflow, roots, maxFiles }) {
+  const technology = headerTechnologyForWorkflow(workflow, technologyId);
+  return buildHeaderGrounding({
+    roots: roots?.length ? roots : [],
+    technology,
+    max_files: maxFiles || 12000,
+    include_snippets: false
+  });
+}
+
+function headerTechnologyForWorkflow(workflow, technologyId) {
+  if (technologyId === "rtx-video-sdk") return "rtx-video-sdk";
+  if (technologyId === "video-codec-sdk") return "video-codec-sdk";
+  if (technologyId === "reflex") return "reflex";
+  if (technologyId === "rtx-kit") return "nrd";
+  if (workflow === "ffmpeg-gstreamer" || workflow === "python-video") return "video-codec-sdk";
+  if (workflow === "custom-cpp-renderer") return "dlss-streamline";
+  return technologyId || workflow || "dlss-streamline";
+}
+
+function headerTechnologyForPhase3Workflow(workflow, technologyId) {
+  const map = {
+    "streamline-init-scaffold": "dlss-streamline",
+    "d3d12-streamline-dlss-sr-kit": "dlss-streamline",
+    "d3d12-dxr-raytracing-starter-kit": "rtx-kit",
+    "nrd-denoiser-bridge-kit": "nrd",
+    "cmake-sdk-wiring": "dlss-streamline",
+    "video-codec-native-pipeline-kit": "video-codec-sdk",
+    "video-codec-sample-adaptation": "video-codec-sdk",
+    "rtx-video-native-pipeline-kit": "rtx-video-sdk",
+    "rtx-video-pipeline-skeleton": "rtx-video-sdk",
+    "reflex-marker-scaffold": "reflex",
+    "nsight-marker-insertion": "dlss-streamline",
+    "unreal-plugin-config-validation": technologyId || "dlss-streamline"
+  };
+  return map[workflow] || technologyId || "dlss-streamline";
+}
+
+function apiGenerationGate(headerGrounding, requiresHeaderGrounding) {
+  if (!requiresHeaderGrounding) {
+    return {
+      status: "plan_only",
+      code_output_mode: "plan_only_no_sdk_calls",
+      reason: "This output is planning-only and does not generate SDK API calls."
+    };
+  }
+  if (headerGrounding?.can_generate_real_api_guidance) {
+    return {
+      status: "header_grounded",
+      code_output_mode: "header_grounded_observed_symbols_only",
+      reason: "Required local header symbols were observed. Real API guidance may reference observed symbols only.",
+      observed_symbol_sample: (headerGrounding.relevant_symbols || []).slice(0, 20)
+    };
+  }
+  if (headerGrounding?.relevant_headers?.length) {
+    return {
+      status: "blocked_missing_symbols",
+      code_output_mode: "template_only_no_real_sdk_calls",
+      reason: `Relevant headers were found, but required symbols are missing: ${(headerGrounding.missing_required_symbols || []).join(", ") || "unknown"}.`,
+      missing_required_symbols: headerGrounding.missing_required_symbols || []
+    };
+  }
+  return {
+    status: "template_only_no_headers",
+    code_output_mode: "template_only_no_real_sdk_calls",
+    reason: "No relevant local SDK headers were detected. Output must stay pseudocode/template only."
+  };
+}
+
+function headerGroundedGuidance(items, apiGate, headerGrounding) {
+  const prefix =
+    apiGate.status === "header_grounded"
+      ? [`Header-grounded: real SDK API guidance is limited to observed symbols such as ${(headerGrounding.relevant_symbols || []).slice(0, 8).join(", ") || "none"}.`]
+      : [`Template-only: ${apiGate.reason} Do not name or call SDK functions until local headers satisfy the grounding gate.`];
+  return [...prefix, ...(items || [])];
 }
 
 function phase2WorkflowPlan(context) {
@@ -1961,6 +3843,14 @@ function phase2MissingInformation(context, workflow) {
   ];
   if (!context.root) missing.push("Project path for repo-aware file mapping.");
   if (!context.tech) missing.push("Resolved NVIDIA technology registry entry.");
+  if (context.headerGrounding && !context.headerGrounding.can_generate_real_api_guidance) {
+    const missingSymbols = context.headerGrounding.missing_required_symbols || [];
+    missing.push(
+      missingSymbols.length
+        ? `Local SDK headers for ${context.headerGrounding.technology} are missing required symbols: ${missingSymbols.join(", ")}.`
+        : `Local SDK headers for ${context.headerGrounding.technology} were not detected; code output remains template-only.`
+    );
+  }
   return [...new Set(missing)];
 }
 
@@ -2086,14 +3976,22 @@ function rollbackPlan(summary) {
 function buildPhase3Context(args) {
   const context = buildPhase2Context({
     ...args,
+    sdk_roots: normalizeStringList(args.sdk_roots).length ? args.sdk_roots : args.sdk_root,
     target_workflow: phase2WorkflowForPhase3(args.workflow),
     max_files: args.max_files,
     include_evidence: args.include_evidence
   });
   const phase3Workflow = normalizePhase3Workflow(args.workflow, args.goal, context.project, context.primaryRoute);
+  const phase3HeaderGrounding = buildContextHeaderGrounding({
+    technologyId: context.technologyId,
+    workflow: headerTechnologyForPhase3Workflow(phase3Workflow, context.technologyId),
+    roots: headerGroundingRoots(args, context.root),
+    maxFiles: args.max_files
+  });
   return {
     ...context,
     phase3Workflow,
+    headerGrounding: phase3HeaderGrounding,
     sdkRoot: args.sdk_root ? resolveInputPath(args.sdk_root) : null
   };
 }
@@ -2103,7 +4001,12 @@ function phase2WorkflowForPhase3(workflow) {
     "unreal-plugin-config-validation": "unreal",
     "cmake-sdk-wiring": "custom-cpp-renderer",
     "streamline-init-scaffold": "custom-cpp-renderer",
+    "d3d12-streamline-dlss-sr-kit": "custom-cpp-renderer",
+    "d3d12-dxr-raytracing-starter-kit": "custom-cpp-renderer",
+    "nrd-denoiser-bridge-kit": "custom-cpp-renderer",
+    "video-codec-native-pipeline-kit": "ffmpeg-gstreamer",
     "video-codec-sample-adaptation": "ffmpeg-gstreamer",
+    "rtx-video-native-pipeline-kit": "ffmpeg-gstreamer",
     "rtx-video-pipeline-skeleton": "ffmpeg-gstreamer",
     "nsight-marker-insertion": "custom-cpp-renderer",
     "reflex-marker-scaffold": "custom-cpp-renderer"
@@ -2117,7 +4020,12 @@ function normalizePhase3Workflow(requested, goal, project, primaryRoute) {
     "unreal-plugin-config-validation",
     "cmake-sdk-wiring",
     "streamline-init-scaffold",
+    "d3d12-streamline-dlss-sr-kit",
+    "d3d12-dxr-raytracing-starter-kit",
+    "nrd-denoiser-bridge-kit",
+    "video-codec-native-pipeline-kit",
     "video-codec-sample-adaptation",
+    "rtx-video-native-pipeline-kit",
     "rtx-video-pipeline-skeleton",
     "nsight-marker-insertion",
     "reflex-marker-scaffold"
@@ -2127,27 +4035,41 @@ function normalizePhase3Workflow(requested, goal, project, primaryRoute) {
   const text = lower(`${goal}\n${primaryRoute?.technology_id || ""}\n${JSON.stringify(project || {})}`);
   if (matchesAny(text, ["unreal", ".uproject", "ue5", "ue 5"])) return "unreal-plugin-config-validation";
   if (matchesAny(text, ["cmake", "include path", "lib path", "library path", "sdk wiring", "build setup"])) return "cmake-sdk-wiring";
-  if (matchesAny(text, ["rtx video", "super resolution", "artifact reduction", "sdr-to-hdr", "sdr to hdr"])) return "rtx-video-pipeline-skeleton";
-  if (matchesAny(text, ["video codec", "nvenc", "nvdec", "ffmpeg", "gstreamer", "transcode", "decode", "encode"])) return "video-codec-sample-adaptation";
+  if (matchesAny(text, ["dlss sr", "dlss super resolution", "d3d12 streamline dlss", "dlaa", "super resolution kit"])) return "d3d12-streamline-dlss-sr-kit";
+  if (matchesAny(text, ["nrd", "denoiser", "denois", "reblur", "relax", "sigma"])) return "nrd-denoiser-bridge-kit";
+  if (matchesAny(text, ["dxr", "ray tracing", "raytracing", "ray-traced", "ray traced", "tlas", "blas", "shader binding table", "sbt"])) return "d3d12-dxr-raytracing-starter-kit";
+  if (matchesAny(text, ["rtx video", "rtx video sdk", "video enhancement", "native media", "media player", "super resolution", "artifact reduction", "sdr-to-hdr", "sdr to hdr"])) return "rtx-video-native-pipeline-kit";
+  if (matchesAny(text, ["video codec", "nvenc", "nvdec", "ffmpeg", "gstreamer", "pynvvideocodec", "transcode", "decode", "encode"])) return "video-codec-native-pipeline-kit";
   if (matchesAny(text, ["nsight", "gpu marker", "debug marker", "profile marker", "capture marker"])) return "nsight-marker-insertion";
   if (matchesAny(text, ["reflex", "latency", "click-to-photon", "input lag"])) return "reflex-marker-scaffold";
-  if (matchesAny(text, ["streamline", "dlss", "frame generation", "ray reconstruction", "renderer", "d3d12", "vulkan"])) return "streamline-init-scaffold";
+  if (matchesAny(text, ["streamline", "dlss", "renderer", "d3d12"])) return "d3d12-streamline-dlss-sr-kit";
+  if (matchesAny(text, ["frame generation", "ray reconstruction", "vulkan"])) return "streamline-init-scaffold";
 
   if (primaryRoute?.technology_id === "unreal-dlss-plugin") return "unreal-plugin-config-validation";
-  if (primaryRoute?.technology_id === "rtx-video-sdk") return "rtx-video-pipeline-skeleton";
-  if (primaryRoute?.technology_id === "video-codec-sdk") return "video-codec-sample-adaptation";
+  if (primaryRoute?.technology_id === "rtx-video-sdk") return "rtx-video-native-pipeline-kit";
+  if (primaryRoute?.technology_id === "video-codec-sdk") return "video-codec-native-pipeline-kit";
   if (primaryRoute?.technology_id === "reflex") return "reflex-marker-scaffold";
   if (primaryRoute?.technology_id === "nsight-aftermath") return "nsight-marker-insertion";
+  if (primaryRoute?.technology_id === "rtx-kit" && matchesAny(text, ["nrd", "denoiser", "denois", "reblur", "relax", "sigma"])) return "nrd-denoiser-bridge-kit";
+  if (primaryRoute?.technology_id === "rtx-kit" && matchesAny(text, ["dxr", "ray tracing", "raytracing"])) return "d3d12-dxr-raytracing-starter-kit";
   return "streamline-init-scaffold";
 }
 
 function phase3ImplementationPackage(context, args) {
   const baseValidation = validationSteps(context.technologyId, true);
+  const apiGate = apiGenerationGate(context.headerGrounding, true);
   const common = {
     write_mode: args.write_files === true ? "approved_create_new_scaffold_files" : "preview_only",
     generated_files_are_create_only: true,
     existing_repo_edits_are_described_not_applied: true,
-    approval_token_required_for_writes: "APPROVED_PHASE_3_EDITS"
+    approval_token_required_for_writes: "APPROVED_PHASE_3_EDITS",
+    code_output_mode: apiGate.code_output_mode,
+    api_generation_gate: apiGate,
+    header_grounding: context.headerGrounding,
+    header_grounding_policy:
+      apiGate.status === "header_grounded"
+        ? "Real SDK API guidance may reference observed local header symbols only."
+        : "Generated files are pseudocode/template scaffolds only and must not contain real SDK calls."
   };
 
   const table = {
@@ -2266,75 +4188,13 @@ function phase3ImplementationPackage(context, args) {
       rollback_plan: rollbackPlan("Remove StreamlineIntegration files and the renderer target reference, leaving the original render path untouched."),
       sources: sourceRefs(["nvidia-dlss", "nvidia-streamline-page", "streamline-programming-guide", "streamline-dlssg-guide"])
     }),
-    "video-codec-sample-adaptation": () => ({
-      summary: "Create a small Video Codec SDK adapter shell for NVENC/NVDEC planning without assuming codec support.",
-      files: [
-        scaffoldFile("src/nvidia_video/NvidiaVideoCodecAdapter.h", "cpp", "Adapter interface for encode/decode capability checks and sample adaptation.", videoCodecHeader()),
-        scaffoldFile("src/nvidia_video/NvidiaVideoCodecAdapter.cpp", "cpp", "Compile-safe adapter shell for future Video Codec SDK or FFmpeg/GStreamer wiring.", videoCodecCpp()),
-        scaffoldFile(
-          "docs/nvidia/video-codec-adaptation.md",
-          "markdown",
-          "Checklist for adapting Video Codec SDK samples or framework pipelines.",
-          [
-            "# NVIDIA Video Codec SDK Adaptation",
-            "",
-            "Use this scaffold for encode, decode, transcode, capture, streaming, or video dataset ingestion workflows.",
-            "",
-            "Required checks:",
-            "",
-            "1. Confirm codec support on the selected GPU.",
-            "2. Separate NVENC/NVDEC engine utilization from CUDA or graphics utilization.",
-            "3. Validate codec, profile, level, rate control, bit depth, chroma format, and latency.",
-            "4. Preserve software fallback until throughput, quality, and A/V sync pass.",
-            ""
-          ]
-        )
-      ],
-      host_repo_edits_required: [
-        "Add the adapter to the narrow video pipeline target.",
-        "Connect it to existing FFmpeg/GStreamer/Video Codec SDK setup only after capability probing is implemented.",
-        "Keep CPU/software fallback configurable."
-      ],
-      validation_plan: mergePlan(baseValidation, [
-        "Run short encode/decode samples with expected codec/profile output.",
-        "Collect throughput, latency, quality metrics, dropped frames, and A/V sync drift."
-      ]),
-      rollback_plan: rollbackPlan("Remove the adapter target references and switch configuration back to the existing software path."),
-      sources: sourceRefs(["video-codec-sdk"])
-    }),
-    "rtx-video-pipeline-skeleton": () => ({
-      summary: "Create an RTX Video SDK pipeline shell for media enhancement routing without implementing version-specific SDK calls.",
-      files: [
-        scaffoldFile("src/nvidia_video/RtxVideoPipeline.h", "cpp", "Pipeline contract for RTX Video Super Resolution, artifact reduction, and SDR-to-HDR routing.", rtxVideoHeader()),
-        scaffoldFile("src/nvidia_video/RtxVideoPipeline.cpp", "cpp", "Compile-safe RTX Video pipeline shell with explicit effect selection and validation hooks.", rtxVideoCpp()),
-        scaffoldFile(
-          "docs/nvidia/rtx-video-pipeline.md",
-          "markdown",
-          "Checklist for RTX Video SDK media enhancement integration.",
-          [
-            "# RTX Video SDK Pipeline",
-            "",
-            "Use RTX Video SDK for media playback and creative-app video enhancement, not DLSS.",
-            "",
-            "Validate Super Resolution, artifact reduction, and SDR-to-HDR separately.",
-            "Confirm input bit depth, color space, source resolution, target resolution, and output display path.",
-            "Keep HDR output validation separate from upscaling quality validation.",
-            ""
-          ]
-        )
-      ],
-      host_repo_edits_required: [
-        "Attach the pipeline shell at the media frame-processing boundary.",
-        "Choose DX11, DX12, Vulkan, or CUDA route only after local SDK docs and project API are confirmed.",
-        "Expose effect toggles only after runtime support checks."
-      ],
-      validation_plan: mergePlan(baseValidation, [
-        "Test each RTX Video effect independently on approved clips.",
-        "Measure playback latency, throughput, and HDR output behavior."
-      ]),
-      rollback_plan: rollbackPlan("Disable the RTX Video pipeline selector and route media frames back through the existing playback path."),
-      sources: sourceRefs(["rtx-video-sdk"])
-    }),
+    "d3d12-streamline-dlss-sr-kit": () => d3d12StreamlineDlssSrKit(context, apiGate, baseValidation),
+    "d3d12-dxr-raytracing-starter-kit": () => d3d12DxrRayTracingStarterKit(context, baseValidation),
+    "nrd-denoiser-bridge-kit": () => nrdDenoiserBridgeKit(context, apiGate, baseValidation),
+    "video-codec-native-pipeline-kit": () => videoCodecNativePipelineKit(context, apiGate, baseValidation),
+    "video-codec-sample-adaptation": () => videoCodecNativePipelineKit(context, apiGate, baseValidation),
+    "rtx-video-native-pipeline-kit": () => rtxVideoNativePipelineKit(context, apiGate, baseValidation),
+    "rtx-video-pipeline-skeleton": () => rtxVideoNativePipelineKit(context, apiGate, baseValidation),
     "nsight-marker-insertion": () => ({
       summary: "Create lightweight marker scopes for Nsight/NVTX-style profiling without changing render behavior.",
       files: [
@@ -2402,6 +4262,479 @@ function phase3ImplementationPackage(context, args) {
   return { ...common, ...factory() };
 }
 
+function d3d12StreamlineDlssSrKit(context, apiGate, baseValidation) {
+  const readiness = d3d12StreamlineReadiness(context, apiGate);
+  const validationHarness = d3d12StreamlineValidationHarness(readiness);
+  return {
+    summary: "Create a gated D3D12 Streamline DLSS Super Resolution / DLAA adapter kit with header-grounded API probes, build wiring, host-resource TODO boundaries, and validation harness guidance.",
+    implementation_readiness: readiness,
+    build_system_detection: readiness.build_system_detection,
+    validation_harness: validationHarness,
+    files: [
+      scaffoldFile(
+        "src/nvidia/streamline/DlssTypes.h",
+        "cpp",
+        "Thin value types for DLSS SR/DLAA quality settings, feature support, and per-frame host renderer inputs.",
+        d3d12DlssTypesHeader()
+      ),
+      scaffoldFile(
+        "src/nvidia/streamline/NvidiaStreamlineBridge.h",
+        "cpp",
+        "D3D12 Streamline bridge interface for DLSS SR/DLAA support checks and per-frame evaluation boundaries.",
+        d3d12StreamlineBridgeHeader()
+      ),
+      scaffoldFile(
+        "src/nvidia/streamline/NvidiaStreamlineBridge.cpp",
+        "cpp",
+        "Header-grounded D3D12 Streamline bridge implementation shell. Real SDK symbol probes are emitted only when local headers pass the grounding gate.",
+        d3d12StreamlineBridgeCpp(apiGate, readiness)
+      ),
+      scaffoldFile(
+        "cmake/NvidiaStreamlineDlss.cmake",
+        "cmake",
+        "CMake wiring for user-provided Streamline SDK include/lib paths.",
+        d3d12StreamlineCmakeWiring()
+      ),
+      scaffoldFile(
+        "build/NvidiaStreamlineDlss.props",
+        "xml",
+        "MSBuild property sheet for user-provided Streamline SDK include/lib paths.",
+        d3d12StreamlineMsbuildProps()
+      ),
+      scaffoldFile(
+        "docs/nvidia/d3d12-streamline-dlss-sr-dlaa-kit.md",
+        "markdown",
+        "Validation and integration checklist for the D3D12 Streamline DLSS SR/DLAA kit.",
+        d3d12StreamlineKitNotes(readiness, validationHarness)
+      )
+    ],
+    host_repo_edits_required: [
+      "Add the generated NvidiaStreamlineBridge.cpp and DlssTypes.h files to the narrow D3D12 renderer target after review.",
+      "Wire the generated CMake include or MSBuild props into the renderer build only after setting a local, license-approved Streamline SDK root.",
+      "Map host renderer resources explicitly: color, depth, motion vectors, jitter, exposure, reset, command list, and command queue.",
+      "Call runtime feature-support queries before exposing DLSS SR or DLAA UI.",
+      "Keep runtime DLL/shared-library placement and redistribution checks in a separate license-reviewed patch."
+    ],
+    validation_plan: mergePlan(baseValidation, [
+      "Configure and compile the bridge with the generated CMake or MSBuild wiring.",
+      "Verify the compile-time Streamline symbol probes against the selected local SDK headers.",
+      "Run a runtime support query before enabling DLSS SR or DLAA.",
+      "Capture Streamline logs from the configured app-local log directory.",
+      "Capture a representative D3D12 frame in Nsight Graphics after resource boundaries are mapped."
+    ]),
+    rollback_plan: rollbackPlan("Remove the generated src/nvidia/streamline files, remove the CMake include or MSBuild props import, and leave the existing renderer path untouched."),
+    sources: sourceRefs(["nvidia-dlss", "nvidia-streamline-page", "streamline-programming-guide", "streamline-releases", "nsight-graphics"])
+  };
+}
+
+function d3d12StreamlineReadiness(context, apiGate) {
+  const project = context.project || {};
+  const graphicsApis = project.graphics_apis || [];
+  const languages = project.languages || [];
+  const buildSystems = project.build_systems || [];
+  const isD3d12 = graphicsApis.includes("D3D12");
+  const isCpp = languages.some((language) => /C\/C\+\+|C\+\+|C\/C/i.test(language));
+  const buildSystemDetection = {
+    cmake: buildSystems.includes("CMake"),
+    msbuild: buildSystems.includes("MSBuild/Visual Studio"),
+    detected: buildSystems.filter((item) => /CMake|MSBuild|Visual Studio/i.test(item)),
+    state: buildSystems.some((item) => /CMake|MSBuild|Visual Studio/i.test(item)) ? "supported_build_system_detected" : "build_system_unknown"
+  };
+  const headers = context.headerGrounding || {};
+  const hasStreamlineHeaders = Boolean(headers.relevant_headers?.length);
+  const blockers = [];
+  if (!context.root) blockers.push("project_path is required to detect a custom D3D12 C++ renderer.");
+  if (!isCpp) blockers.push("C/C++ renderer source was not detected.");
+  if (!isD3d12) blockers.push("D3D12 evidence was not detected.");
+  if (!hasStreamlineHeaders) blockers.push("Local or project-vendored Streamline SDK headers were not detected.");
+  if (hasStreamlineHeaders && !headers.can_generate_real_api_guidance) {
+    blockers.push(`Streamline headers were detected but required symbols are missing: ${(headers.missing_required_symbols || []).join(", ") || "unknown"}.`);
+  }
+
+  let state = "header_grounded_adapter_ready";
+  if (!context.root || !isCpp || !isD3d12) state = "rejected_not_custom_d3d12_renderer";
+  else if (!hasStreamlineHeaders) state = "blocked_missing_streamline_sdk";
+  else if (!headers.can_generate_real_api_guidance) state = "limited_missing_required_symbols";
+  else if (buildSystemDetection.state === "build_system_unknown") state = "header_grounded_build_system_unknown";
+
+  return {
+    state,
+    real_api_implementation_allowed: state === "header_grounded_adapter_ready" || state === "header_grounded_build_system_unknown",
+    project_root: context.root,
+    custom_renderer_detection: {
+      d3d12_detected: isD3d12,
+      cpp_detected: isCpp,
+      graphics_apis: graphicsApis,
+      languages,
+      relevant_files: selectRelevantFiles(context.inventory, "custom-cpp-renderer").slice(0, 20)
+    },
+    build_system_detection: buildSystemDetection,
+    streamline_sdk_requirement: {
+      state: hasStreamlineHeaders ? "sdk_headers_detected" : "sdk_path_required",
+      detected_sdk_root: headers.detected_sdk_root || null,
+      detected_version: headers.detected_version || null,
+      required_symbols: headers.required_symbols || [],
+      missing_required_symbols: headers.missing_required_symbols || [],
+      confidence_level: headers.confidence_level || "none"
+    },
+    host_resource_todo_boundaries: [
+      "color",
+      "depth",
+      "motion vectors",
+      "jitter",
+      "exposure",
+      "reset",
+      "command list",
+      "command queue"
+    ],
+    blockers,
+    unsafe_assumptions_rejected: [
+      "No DLSS SR/DLAA runtime support is claimed from static headers alone.",
+      "No Streamline SDK function signature is guessed.",
+      "No Frame Generation or Multi Frame Generation path is generated in this kit.",
+      "No NVIDIA binaries are copied, packaged, downloaded, or redistributed."
+    ]
+  };
+}
+
+function d3d12StreamlineValidationHarness(readiness) {
+  const sdkRoot = readiness.streamline_sdk_requirement.detected_sdk_root || "<STREAMLINE_SDK_ROOT>";
+  return {
+    compile_commands: [
+      `cmake -S . -B build -DNVIDIA_STREAMLINE_SDK_ROOT="${sdkRoot}" -DNVIDIA_STREAMLINE_ENABLE_REAL_API=ON`,
+      "cmake --build build --config RelWithDebInfo",
+      `msbuild <YourRenderer>.sln /p:NvidiaStreamlineSdkRoot="${sdkRoot}" /p:NvidiaStreamlineEnableRealApi=true /p:Configuration=RelWithDebInfo`
+    ],
+    runtime_support_query_checklist: [
+      "Start with DLSS SR/DLAA disabled in UI/config.",
+      "Initialize the bridge only after the D3D12 device and command queue are valid.",
+      "Check the selected GPU, driver, OS, graphics API, Streamline SDK version, and feature requirement result before exposing DLSS SR or DLAA.",
+      "Reject runtime enablement if color, depth, motion vectors, jitter, exposure, reset, command list, or command queue mapping is incomplete.",
+      "Record the exact SDK root, header version clues, executable build config, GPU, driver, and D3D12 backend."
+    ],
+    streamline_log_path: {
+      configured_app_log_directory: "logs/nvidia/streamline/",
+      note: "Use the bridge InitDesc logDirectory as the app-owned Streamline log/capture location. Do not assume a global default log path."
+    },
+    nsight_capture_checklist: [
+      "Capture a representative gameplay/render frame after DLSS SR/DLAA resource boundaries are mapped.",
+      "Verify color, depth, motion vector, jitter, exposure, reset, command list, and command queue timing in the frame/capture notes.",
+      "Confirm the upscaler pass is placed after opaque rendering and before post/UI composition according to the host renderer design.",
+      "Save the Nsight capture path and exact scene/repro steps as local artifacts only."
+    ]
+  };
+}
+
+function d3d12DxrRayTracingStarterKit(context, baseValidation) {
+  const readiness = d3d12DxrReadiness(context);
+  const validationChecklist = d3d12DxrValidationChecklist(readiness);
+  return {
+    summary: "Create a gated D3D12 DXR starter kit for basic ray-traced shadows/reflections planning, adapter scaffolds, HLSL templates, and validation checklists.",
+    implementation_readiness: readiness,
+    contract_checks: readiness.contract_checks,
+    build_system_detection: readiness.build_system_detection,
+    validation_checklist: validationChecklist,
+    files: [
+      scaffoldFile("src/nvidia/dxr/RtxRayTracingContext.h", "cpp", "D3D12 DXR feature-query and context contract.", rtxRayTracingContextHeader()),
+      scaffoldFile("src/nvidia/dxr/RtxRayTracingContext.cpp", "cpp", "D3D12 DXR context shell with feature query and fallback gates.", rtxRayTracingContextCpp()),
+      scaffoldFile("src/nvidia/dxr/AccelerationStructureBuilder.h", "cpp", "BLAS/TLAS build contract for host mesh and instance data.", accelerationStructureBuilderHeader()),
+      scaffoldFile("src/nvidia/dxr/AccelerationStructureBuilder.cpp", "cpp", "Acceleration structure builder shell with explicit host data TODOs.", accelerationStructureBuilderCpp()),
+      scaffoldFile("src/nvidia/dxr/ShaderBindingTableBuilder.h", "cpp", "Shader Binding Table layout contract for raygen, miss, and hit groups.", shaderBindingTableBuilderHeader()),
+      scaffoldFile("src/nvidia/dxr/ShaderBindingTableBuilder.cpp", "cpp", "Shader Binding Table builder shell with record-size validation.", shaderBindingTableBuilderCpp()),
+      scaffoldFile("src/nvidia/dxr/RayTracingPass.h", "cpp", "Basic ray-traced shadows/reflections pass contract.", rayTracingPassHeader()),
+      scaffoldFile("src/nvidia/dxr/RayTracingPass.cpp", "cpp", "RayTracingPass shell with feature, TLAS, shader, and fallback gates.", rayTracingPassCpp()),
+      scaffoldFile("shaders/nvidia/dxr/RayTracingCommon.hlsl", "hlsl", "Shared DXR payload, attributes, constants, and resources.", rayTracingCommonHlsl()),
+      scaffoldFile("shaders/nvidia/dxr/RayTracingRaygen.hlsl", "hlsl", "Ray generation shader template for first visible ray pass.", rayTracingRaygenHlsl()),
+      scaffoldFile("shaders/nvidia/dxr/RayTracingMiss.hlsl", "hlsl", "Miss shader template for fallback sky/visibility behavior.", rayTracingMissHlsl()),
+      scaffoldFile("shaders/nvidia/dxr/RayTracingClosestHit.hlsl", "hlsl", "Closest-hit shader template for material/G-buffer-aware hit shading.", rayTracingClosestHitHlsl()),
+      scaffoldFile("cmake/NvidiaDxrRayTracing.cmake", "cmake", "CMake wiring for the DXR starter adapter and HLSL shader templates.", d3d12DxrCmakeWiring()),
+      scaffoldFile("docs/nvidia/d3d12-dxr-raytracing-starter-kit.md", "markdown", "Validation checklist and integration boundaries for the D3D12 DXR starter kit.", d3d12DxrStarterKitNotes(readiness, validationChecklist))
+    ],
+    host_repo_edits_required: [
+      "Add the generated src/nvidia/dxr C++ files to the D3D12 renderer target only after reviewing the patch plan.",
+      "Add the generated HLSL files to the existing shader compilation pipeline or DXC build step.",
+      "Map host mesh, instance, material, G-buffer, render graph, and fallback resources explicitly before enabling the pass.",
+      "Insert RayTracingPass at a reviewed render graph point for basic shadows/reflections only.",
+      "Keep RTXDI, NRD, and full path tracing as separate future implementation kits."
+    ],
+    validation_plan: mergePlan(baseValidation, validationChecklist.required_steps),
+    rollback_plan: rollbackPlan("Remove the generated src/nvidia/dxr files, shader templates, and CMake include/import. Leave the original raster render path untouched."),
+    sources: sourceRefs(["rtx-kit", "nsight-graphics", "nsight-graphics-2025-2"])
+  };
+}
+
+function d3d12DxrReadiness(context) {
+  const project = context.project || {};
+  const graphicsApis = project.graphics_apis || [];
+  const languages = project.languages || [];
+  const buildSystems = project.build_systems || [];
+  const isD3d12 = graphicsApis.includes("D3D12");
+  const isCpp = languages.some((language) => /C\/C\+\+|C\+\+|C\/C/i.test(language));
+  const buildSystemDetection = {
+    cmake: buildSystems.includes("CMake"),
+    msbuild: buildSystems.includes("MSBuild/Visual Studio"),
+    detected: buildSystems.filter((item) => /CMake|MSBuild|Visual Studio/i.test(item)),
+    state: buildSystems.some((item) => /CMake|MSBuild|Visual Studio/i.test(item)) ? "supported_build_system_detected" : "build_system_unknown"
+  };
+  const checks = {
+    d3d12_device_feature_level: dxrEvidenceCheck(context.inventory, "d3d12_device_feature_level", "D3D12 feature-level or ray tracing feature-tier query path.", ["D3D_FEATURE_LEVEL_12_1", "D3D_FEATURE_LEVEL_12_2", "D3D12_FEATURE_D3D12_OPTIONS5", "D3D12_RAYTRACING_TIER", "raytracing feature tier", "ray tracing feature tier"]),
+    dxr_capable_api_usage: dxrEvidenceCheck(context.inventory, "dxr_capable_api_usage", "DXR-capable D3D12 API usage.", ["ID3D12Device5", "D3D12_RAYTRACING", "DispatchRays", "TraceRay", "D3D12_DISPATCH_RAYS_DESC", "D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC"]),
+    shader_compilation_path: dxrEvidenceCheck(context.inventory, "shader_compilation_path", "HLSL/DXIL/DXC shader compilation path.", ["hlsl", "dxil", "dxc", "shader compiler", "RayTracing.hlsl"]),
+    mesh_instance_data_access: dxrEvidenceCheck(context.inventory, "mesh_instance_data_access", "Mesh and instance data for BLAS/TLAS.", ["mesh", "instance", "vertex buffer", "index buffer", "mesh instance data"]),
+    render_graph_insertion_point: dxrEvidenceCheck(context.inventory, "render_graph_insertion_point", "Render graph or pass insertion point.", ["render graph", "render pass", "ray tracing pass"]),
+    gbuffer_material_data_access: dxrEvidenceCheck(context.inventory, "gbuffer_material_data_access", "G-buffer and material data for hit shading/composition.", ["gbuffer", "g-buffer", "material", "albedo", "roughness", "normal buffer"]),
+    fallback_path: dxrEvidenceCheck(context.inventory, "fallback_path", "Raster or non-ray-tracing fallback path.", ["fallback", "raster", "disable ray tracing"])
+  };
+  const failedChecks = Object.values(checks).filter((check) => check.status !== "pass");
+  const blockers = [];
+  if (!context.root) blockers.push("project_path is required to detect a custom D3D12 DXR renderer.");
+  if (!isCpp) blockers.push("C/C++ renderer source was not detected.");
+  if (!isD3d12) blockers.push("D3D12 evidence was not detected.");
+  if (buildSystemDetection.state === "build_system_unknown") blockers.push("CMake or MSBuild build-system evidence was not detected.");
+  blockers.push(...failedChecks.map((check) => check.blocker));
+
+  let state = "dxr_starter_kit_ready";
+  if (!context.root || !isCpp || !isD3d12) state = "rejected_not_custom_d3d12_renderer";
+  else if (failedChecks.length || buildSystemDetection.state === "build_system_unknown") state = "blocked_missing_dxr_readiness";
+
+  return {
+    state,
+    starter_kit_generation_allowed: state === "dxr_starter_kit_ready",
+    project_root: context.root,
+    custom_renderer_detection: {
+      d3d12_detected: isD3d12,
+      cpp_detected: isCpp,
+      graphics_apis: graphicsApis,
+      languages,
+      relevant_files: selectRelevantFiles(context.inventory, "custom-cpp-renderer").slice(0, 24)
+    },
+    build_system_detection: buildSystemDetection,
+    contract_checks: checks,
+    blockers: [...new Set(blockers.filter(Boolean))],
+    scoped_features: [
+      "basic ray-traced shadows",
+      "basic ray-traced reflections",
+      "first visible ray pass",
+      "fallback-preserving render graph insertion"
+    ],
+    explicitly_out_of_scope: [
+      "RTXDI full integration",
+      "NRD full integration",
+      "full path tracer",
+      "renderer-wide material-system rewrite",
+      "automatic render graph edits without approval"
+    ],
+    unsafe_assumptions_rejected: [
+      "No runtime ray tracing support is claimed from static source evidence alone.",
+      "No acceleration-structure ownership is assumed without mesh and instance data access.",
+      "No invasive host renderer edits are performed by this kit.",
+      "No RTXDI, NRD, or full path-tracing implementation is generated."
+    ]
+  };
+}
+
+function dxrEvidenceCheck(inventory, id, description, tokens) {
+  const text = inventoryText(inventory);
+  const matched = tokens.filter((token) => text.includes(lower(token)));
+  return {
+    id,
+    description,
+    status: matched.length ? "pass" : "fail",
+    matched_tokens: matched,
+    required_tokens_any: tokens,
+    blocker: matched.length ? null : `Missing DXR readiness evidence: ${description}`
+  };
+}
+
+function d3d12DxrValidationChecklist(readiness) {
+  return {
+    required_steps: [
+      "Run a D3D12 feature query for ray tracing support before enabling the mode.",
+      "Build BLAS/TLAS for a representative scene and record success/failure.",
+      "Compile raygen, miss, and closest-hit shaders through the project shader compiler path.",
+      "Render a first visible ray-traced shadows/reflections pass with a fallback toggle.",
+      "Capture the pass in Nsight Graphics and verify acceleration structure, SBT, DispatchRays, and output resources.",
+      "Validate the raster fallback remains available and selected when DXR support is missing."
+    ],
+    feature_query: ["D3D12 feature level", "D3D12 ray tracing tier", "device/interface used for DispatchRays"],
+    tlas_blas_build: ["BLAS inputs from vertex/index buffers", "TLAS instance data", "scratch/result buffer lifetime", "barrier/synchronization plan"],
+    shader_compile: ["DXC/HLSL path", "DXIL library", "raygen/miss/closest-hit exports", "root signature association"],
+    first_ray_pass_visible: ["known scene", "known light/reflection target", "debug output texture", "fallback toggle"],
+    nsight_capture: ["capture path", "scene/repro", "DispatchRays event", "acceleration structures", "shader binding table"],
+    fallback_path: ["disable ray tracing setting", "raster shadow/reflection fallback", "unsupported GPU behavior"]
+  };
+}
+
+function nrdDenoiserBridgeKit(context, apiGate, baseValidation) {
+  const readiness = nrdDenoiserReadiness(context, apiGate);
+  const validationChecklist = nrdValidationChecklist(readiness);
+  return {
+    summary: "Create a gated NRD denoiser bridge for noisy ray-traced diffuse/specular/shadow signals with explicit guide-buffer contracts, SDK/header gating, and ReBLUR/ReLAX/SIGMA validation checklists.",
+    implementation_readiness: readiness,
+    contract_checks: readiness.contract_checks,
+    build_system_detection: readiness.build_system_detection,
+    validation_checklist: validationChecklist,
+    files: [
+      scaffoldFile("src/nvidia/nrd/NrdFrameInputs.h", "cpp", "NRD signal enum, frame-input contract, guide-buffer contract, and validation result types.", nrdFrameInputsHeader()),
+      scaffoldFile("src/nvidia/nrd/NrdDenoiserBridge.h", "cpp", "NRD bridge interface for selecting denoiser methods and validating per-frame inputs.", nrdDenoiserBridgeHeader()),
+      scaffoldFile("src/nvidia/nrd/NrdDenoiserBridge.cpp", "cpp", "NRD bridge shell with SDK include gate, input validation, and no guessed NRD API calls.", nrdDenoiserBridgeCpp(apiGate, readiness)),
+      scaffoldFile("cmake/NvidiaNrdDenoiser.cmake", "cmake", "CMake wiring for a user-provided NRD SDK include root and the generated bridge.", nrdCmakeWiring()),
+      scaffoldFile("docs/nvidia/nrd-denoiser-bridge-kit.md", "markdown", "Validation checklist and integration boundaries for ReBLUR/ReLAX/SIGMA readiness.", nrdDenoiserBridgeNotes(readiness, validationChecklist))
+    ],
+    host_repo_edits_required: [
+      "Add the generated src/nvidia/nrd bridge files to the narrow ray tracing renderer target only after review.",
+      "Wire the generated CMake include only after setting a local, license-approved NRD SDK root or leaving template mode explicit.",
+      "Map host renderer resources explicitly: noisy diffuse/specular/shadow signal, normals, roughness, viewZ/depth, motion vectors, camera matrices, render resolution, and temporal reset.",
+      "Select ReBLUR, ReLAX, SIGMA, or a project-specific mode based on the actual noisy signal type and local NRD SDK documentation.",
+      "Keep ray tracing pass generation, NRD denoising bridge wiring, and quality validation as separate reviewable changes."
+    ],
+    validation_plan: mergePlan(baseValidation, validationChecklist.required_steps),
+    rollback_plan: rollbackPlan("Remove the generated src/nvidia/nrd files and CMake include/import. Leave the original noisy ray-traced or raster fallback path untouched."),
+    sources: sourceRefs(["rtx-kit", "nsight-graphics", "nsight-graphics-2025-2"])
+  };
+}
+
+function nrdDenoiserReadiness(context, apiGate) {
+  const project = context.project || {};
+  const graphicsApis = project.graphics_apis || [];
+  const languages = project.languages || [];
+  const buildSystems = project.build_systems || [];
+  const isRealtimeCpp = languages.some((language) => /C\/C\+\+|C\+\+|C\/C/i.test(language));
+  const hasSupportedApi = graphicsApis.includes("D3D12") || graphicsApis.includes("Vulkan");
+  const buildSystemDetection = {
+    cmake: buildSystems.includes("CMake"),
+    msbuild: buildSystems.includes("MSBuild/Visual Studio"),
+    detected: buildSystems.filter((item) => /CMake|MSBuild|Visual Studio/i.test(item)),
+    state: buildSystems.some((item) => /CMake|MSBuild|Visual Studio/i.test(item)) ? "supported_build_system_detected" : "build_system_unknown"
+  };
+  const headers = context.headerGrounding || {};
+  const hasNrdHeaders = Boolean(headers.relevant_headers?.length);
+  const checks = {
+    noisy_signals: nrdEvidenceCheck(context.inventory, "noisy_signals", "Noisy diffuse, specular, shadow, occlusion, or ray-traced radiance signal.", ["noisy diffuse", "noisy specular", "shadow signal", "occlusion signal", "ray traced radiance", "ray-traced radiance"]),
+    normals: nrdEvidenceCheck(context.inventory, "normals", "Surface normal buffer.", ["normal buffer", "normals", "normal"]),
+    roughness: nrdEvidenceCheck(context.inventory, "roughness", "Surface roughness or material roughness buffer.", ["roughness", "normal roughness", "material roughness"]),
+    viewz_depth: nrdEvidenceCheck(context.inventory, "viewz_depth", "ViewZ or depth input.", ["viewz", "view z", "depth buffer", "linear depth", "depth"]),
+    motion_vectors: nrdEvidenceCheck(context.inventory, "motion_vectors", "Motion vectors for temporal denoising.", ["motion vector", "motion vectors", "velocity buffer"]),
+    camera_matrices: nrdEvidenceCheck(context.inventory, "camera_matrices", "Current and previous camera matrices.", ["camera matrix", "camera matrices", "previous view", "previous projection", "view projection"]),
+    render_resolution: nrdEvidenceCheck(context.inventory, "render_resolution", "Render resolution for NRD dispatch sizing and history management.", ["render resolution", "resolution", "viewport", "width", "height"]),
+    temporal_reset_state: nrdEvidenceCheck(context.inventory, "temporal_reset_state", "Temporal reset state for camera cuts, history invalidation, and resolution changes.", ["temporal reset", "reset", "camera cut", "history invalidation", "resolution change"])
+  };
+  const failedChecks = Object.values(checks).filter((check) => check.status !== "pass");
+  const blockers = [];
+  if (!context.root) blockers.push("project_path is required to detect a custom renderer that can host NRD.");
+  if (!isRealtimeCpp) blockers.push("C/C++ renderer source was not detected.");
+  if (!hasSupportedApi) blockers.push("D3D12 or Vulkan renderer evidence was not detected.");
+  if (buildSystemDetection.state === "build_system_unknown") blockers.push("CMake or MSBuild build-system evidence was not detected.");
+  blockers.push(...failedChecks.map((check) => check.blocker));
+  if (!hasNrdHeaders) blockers.push("Local or project-vendored NRD SDK headers were not detected; bridge output is official-source-backed template mode only.");
+  if (hasNrdHeaders && !headers.can_generate_real_api_guidance) {
+    blockers.push(`NRD headers were detected but required symbols are missing: ${(headers.missing_required_symbols || []).join(", ") || "unknown"}.`);
+  }
+
+  let state = "nrd_bridge_ready";
+  if (!context.root || !isRealtimeCpp || !hasSupportedApi) state = "rejected_not_custom_realtime_renderer";
+  else if (failedChecks.length) state = "blocked_missing_nrd_frame_inputs";
+  else if (!hasNrdHeaders) state = "blocked_missing_nrd_sdk_template_only";
+  else if (!headers.can_generate_real_api_guidance) state = "limited_missing_nrd_symbols_template_only";
+  else if (buildSystemDetection.state === "build_system_unknown") state = "header_grounded_build_system_unknown";
+
+  return {
+    state,
+    bridge_generation_allowed: state !== "rejected_not_custom_realtime_renderer" && state !== "blocked_missing_nrd_frame_inputs",
+    real_nrd_api_calls_allowed: state === "nrd_bridge_ready" || state === "header_grounded_build_system_unknown",
+    denoising_working_claim_allowed: false,
+    denoising_working_claim_blocker: "This kit only proves bridge/readiness scaffolding. Denoising can be claimed only after project buffers are mapped, the bridge compiles against local NRD headers, and runtime validation artifacts exist.",
+    bridge_generation_mode:
+      hasNrdHeaders && headers.can_generate_real_api_guidance
+        ? "header_grounded_bridge_adapters"
+        : "official_source_backed_template_only_no_sdk_calls",
+    project_root: context.root,
+    custom_renderer_detection: {
+      supported_api_detected: hasSupportedApi,
+      cpp_detected: isRealtimeCpp,
+      graphics_apis: graphicsApis,
+      languages,
+      relevant_files: selectRelevantFiles(context.inventory, "custom-cpp-renderer").slice(0, 24)
+    },
+    build_system_detection: buildSystemDetection,
+    nrd_sdk_requirement: {
+      state: hasNrdHeaders ? "sdk_headers_detected" : "sdk_path_required_or_template_only",
+      detected_sdk_root: headers.detected_sdk_root || null,
+      detected_version: headers.detected_version || null,
+      required_symbols: headers.required_symbols || [],
+      missing_required_symbols: headers.missing_required_symbols || [],
+      relevant_headers: headers.relevant_headers || [],
+      confidence_level: headers.confidence_level || "none",
+      api_generation_gate_status: apiGate.status
+    },
+    contract_checks: checks,
+    required_frame_inputs: [
+      "noisy diffuse/specular/shadow signal",
+      "normals",
+      "roughness",
+      "viewZ/depth",
+      "motion vectors",
+      "camera matrices",
+      "render resolution",
+      "temporal reset state"
+    ],
+    blockers: [...new Set(blockers.filter(Boolean))],
+    unsafe_assumptions_rejected: [
+      "No denoising success is claimed from static source evidence.",
+      "No NRD SDK function signature is guessed.",
+      "No bridge output claims to work without noisy signals and guide buffers.",
+      "No temporal denoiser is enabled without motion vectors and reset behavior.",
+      "No RTXDI, full NRD integration, or full path tracing implementation is generated."
+    ]
+  };
+}
+
+function nrdEvidenceCheck(inventory, id, description, tokens) {
+  const text = inventoryText(inventory);
+  const matched = tokens.filter((token) => text.includes(lower(token)));
+  return {
+    id,
+    description,
+    status: matched.length ? "pass" : "fail",
+    matched_tokens: matched,
+    required_tokens_any: tokens,
+    blocker: matched.length ? null : `Missing NRD readiness evidence: ${description}`
+  };
+}
+
+function nrdValidationChecklist(readiness) {
+  return {
+    required_steps: [
+      "Classify the noisy signal before selecting ReBLUR, ReLAX, SIGMA, or a project-specific denoiser path.",
+      "Validate normals, roughness, viewZ/depth, motion vectors, camera matrices, render resolution, and temporal reset are available for every denoised frame.",
+      "Compile the bridge against the local NRD SDK headers or keep the bridge in explicit template-only mode.",
+      "Run a first before/after denoising capture only after the noisy signal and guide buffers are mapped.",
+      "Test temporal reset behavior for camera cuts, disocclusion-heavy scenes, resolution changes, and history invalidation.",
+      "Capture the denoising pass in Nsight Graphics and preserve the non-denoised fallback path."
+    ],
+    reblur_readiness: [
+      "Noisy diffuse or specular lighting signal is identified.",
+      "Normal, roughness, viewZ/depth, motion vectors, camera matrices, render resolution, and reset state are mapped.",
+      "History reset is triggered for camera cuts and resolution changes."
+    ],
+    relax_readiness: [
+      "Noisy diffuse/specular signal is identified and separated from UI/post effects.",
+      "Temporal guide buffers and camera state are available before denoiser evaluation.",
+      "Before/after quality capture is planned with stable scene/repro steps."
+    ],
+    sigma_readiness: [
+      "Noisy shadow signal or visibility signal is identified.",
+      "Depth/viewZ, normals, motion vectors, render resolution, and reset state are mapped.",
+      "Fallback shadow path remains available when NRD or required buffers are unavailable."
+    ],
+    artifacts_required_before_claiming_working: [
+      "Compile log for the bridge against the selected local SDK/header mode.",
+      "Frame capture showing noisy input, guide buffers, denoised output, and fallback toggle.",
+      "Local notes with GPU, driver, SDK/header root, render resolution, and scene/repro."
+    ]
+  };
+}
+
 function scaffoldFile(relativePath, language, purpose, lines) {
   return {
     action: "create",
@@ -2460,7 +4793,19 @@ function isWithinPath(child, parent) {
 function phase3MissingInformation(context, implementation) {
   const missing = phase2MissingInformation(context, { missing_information: [] });
   if (!context.root) missing.push("Project path for repo-specific insertion points.");
-  if (!context.sdkRoot && ["cmake-sdk-wiring", "streamline-init-scaffold", "video-codec-sample-adaptation", "rtx-video-pipeline-skeleton"].includes(context.phase3Workflow)) {
+  if (context.phase3Workflow === "d3d12-streamline-dlss-sr-kit" && !context.headerGrounding?.detected_sdk_root) {
+    missing.push("Local Streamline SDK root or project-vendored Streamline headers for DLSS SR/DLAA implementation.");
+  }
+  if (context.phase3Workflow === "nrd-denoiser-bridge-kit" && !context.headerGrounding?.detected_sdk_root) {
+    missing.push("Local NRD SDK root or project-vendored NRD headers for header-grounded denoiser bridge work; otherwise output stays official-source-backed template-only.");
+  }
+  if (["rtx-video-native-pipeline-kit", "rtx-video-pipeline-skeleton"].includes(context.phase3Workflow) && !context.headerGrounding?.detected_sdk_root) {
+    missing.push("Local RTX Video SDK root or project-vendored RTX Video headers for real native media enhancement; otherwise output stays template-only.");
+  }
+  if (["video-codec-native-pipeline-kit", "video-codec-sample-adaptation"].includes(context.phase3Workflow) && !context.headerGrounding?.detected_sdk_root) {
+    missing.push("Local Video Codec SDK root or project-vendored nvEncodeAPI/nvcuvid headers for real NVENC/NVDEC adapter work; FFmpeg/GStreamer/PyNvVideoCodec command plans remain plan-only.");
+  }
+  if (!context.sdkRoot && !context.sdkRoots?.length && ["cmake-sdk-wiring", "streamline-init-scaffold", "d3d12-streamline-dlss-sr-kit", "nrd-denoiser-bridge-kit", "video-codec-native-pipeline-kit", "video-codec-sample-adaptation", "rtx-video-native-pipeline-kit", "rtx-video-pipeline-skeleton"].includes(context.phase3Workflow)) {
     missing.push("User-provided SDK root path for compile-time or runtime wiring.");
   }
   if (implementation.host_repo_edits_required?.length) missing.push("User approval for applying host repo edits after scaffold review.");
@@ -2917,8 +5262,19 @@ function releaseScriptStatus(root) {
   const scripts = [
     "scripts/nvidia-rtx-dlss-mcp.mjs",
     "scripts/tests/test-routing-and-fixtures.ps1",
+    "scripts/tests/test-skill-usability.ps1",
     "scripts/tests/test-assisted-implementation.ps1",
     "scripts/tests/test-validation-automation.ps1",
+    "scripts/tests/test-implementation-contracts.ps1",
+    "scripts/tests/test-implementation-readiness-report.ps1",
+    "scripts/tests/test-header-grounded-generation.ps1",
+    "scripts/tests/test-unreal-dlss-validation.ps1",
+    "scripts/tests/test-unity-hdrp-validation.ps1",
+    "scripts/tests/test-d3d12-streamline-dlss-kit.ps1",
+    "scripts/tests/test-d3d12-dxr-raytracing-kit.ps1",
+    "scripts/tests/test-nrd-denoiser-bridge-kit.ps1",
+    "scripts/tests/test-rtx-video-native-pipeline-kit.ps1",
+    "scripts/tests/test-video-codec-native-pipeline-kit.ps1",
     "scripts/tests/test-production-readiness.ps1",
     "scripts/validation/env-report.mjs",
     "scripts/validation/log-analyze.mjs",
@@ -3045,6 +5401,1137 @@ function cmakeSdkOptions() {
     "    message(STATUS \"Streamline runtime dir is configured for review only: ${NVIDIA_STREAMLINE_RUNTIME_DIR}\")",
     "  endif()",
     "endif()",
+    ""
+  ];
+}
+
+function d3d12DlssTypesHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "struct ID3D12CommandQueue;",
+    "struct ID3D12GraphicsCommandList;",
+    "struct ID3D12Resource;",
+    "",
+    "namespace nvidia::streamline {",
+    "",
+    "enum class DlssQualityMode : std::uint32_t {",
+    "  NativeDlaa = 0,",
+    "  Quality = 1,",
+    "  Balanced = 2,",
+    "  Performance = 3,",
+    "  UltraPerformance = 4,",
+    "  Auto = 5",
+    "};",
+    "",
+    "struct DlssQualitySettings {",
+    "  DlssQualityMode mode = DlssQualityMode::Quality;",
+    "  std::uint32_t inputWidth = 0;",
+    "  std::uint32_t inputHeight = 0;",
+    "  std::uint32_t outputWidth = 0;",
+    "  std::uint32_t outputHeight = 0;",
+    "  float sharpness = 0.0f;",
+    "  bool dlaa = false;",
+    "};",
+    "",
+    "struct DlssFeatureSupport {",
+    "  bool streamlineHeadersDetected = false;",
+    "  bool dlssFeatureConstantObserved = false;",
+    "  bool apiSymbolsCompileProbed = false;",
+    "  bool runtimeSupported = false;",
+    "  const char* reason = \"Runtime support has not been queried.\";",
+    "};",
+    "",
+    "struct DlssFrameInputs {",
+    "  ID3D12Resource* color = nullptr;",
+    "  ID3D12Resource* depth = nullptr;",
+    "  ID3D12Resource* motionVectors = nullptr;",
+    "  ID3D12Resource* exposure = nullptr;",
+    "  ID3D12GraphicsCommandList* commandList = nullptr;",
+    "  ID3D12CommandQueue* commandQueue = nullptr;",
+    "  std::uint32_t inputWidth = 0;",
+    "  std::uint32_t inputHeight = 0;",
+    "  std::uint32_t outputWidth = 0;",
+    "  std::uint32_t outputHeight = 0;",
+    "  std::uint32_t frameIndex = 0;",
+    "  float jitterOffsetX = 0.0f;",
+    "  float jitterOffsetY = 0.0f;",
+    "  bool resetAccumulation = false;",
+    "",
+    "  bool HasRequiredResourcesForSr() const {",
+    "    return color && depth && motionVectors && commandList && commandQueue && inputWidth > 0 && inputHeight > 0 && outputWidth > 0 && outputHeight > 0;",
+    "  }",
+    "};",
+    "",
+    "}  // namespace nvidia::streamline",
+    ""
+  ];
+}
+
+function d3d12StreamlineBridgeHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"DlssTypes.h\"",
+    "",
+    "struct ID3D12Device;",
+    "",
+    "namespace nvidia::streamline {",
+    "",
+    "class NvidiaStreamlineBridge final {",
+    " public:",
+    "  struct InitDesc {",
+    "    ID3D12Device* device = nullptr;",
+    "    ID3D12CommandQueue* commandQueue = nullptr;",
+    "    const char* streamlineSdkRoot = nullptr;",
+    "    const char* logDirectory = \"logs/nvidia/streamline\";",
+    "  };",
+    "",
+    "  bool Initialize(const InitDesc& desc);",
+    "  void Shutdown();",
+    "",
+    "  DlssFeatureSupport QueryDlssSupport() const;",
+    "  DlssQualitySettings BuildQualitySettings(DlssQualityMode mode, std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight) const;",
+    "  bool EvaluateSuperResolution(const DlssFrameInputs& inputs, const DlssQualitySettings& settings);",
+    "",
+    "  bool HostDeviceReady() const { return hostDeviceReady_; }",
+    "  const char* LastError() const { return lastError_; }",
+    "",
+    " private:",
+    "  InitDesc desc_{};",
+    "  bool hostDeviceReady_ = false;",
+    "  bool runtimeSupportQueried_ = false;",
+    "  bool dlssRuntimeSupported_ = false;",
+    "  const char* lastError_ = \"Not initialized.\";",
+    "};",
+    "",
+    "}  // namespace nvidia::streamline",
+    ""
+  ];
+}
+
+function d3d12StreamlineBridgeCpp(apiGate, readiness) {
+  const headerGrounded = apiGate.status === "header_grounded";
+  const compileProbeLines = headerGrounded
+    ? [
+        "#if defined(NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API) && NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API",
+        "#if __has_include(<sl.h>)",
+        "#include <sl.h>",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_H 1",
+        "#else",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_H 0",
+        "#endif",
+        "#if __has_include(<sl_dlss.h>)",
+        "#include <sl_dlss.h>",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_DLSS_H 1",
+        "#else",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_DLSS_H 0",
+        "#endif",
+        "#else",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_H 0",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_DLSS_H 0",
+        "#endif",
+        "",
+        "namespace {",
+        "#if NVIDIA_STREAMLINE_BRIDGE_HAS_SL_H",
+        "using SlInitCompileProbe = decltype(&slInit);",
+        "using SlShutdownCompileProbe = decltype(&slShutdown);",
+        "#endif",
+        "#if NVIDIA_STREAMLINE_BRIDGE_HAS_SL_DLSS_H",
+        "using SlDlssOptimalSettingsCompileProbe = decltype(&slDLSSGetOptimalSettings);",
+        "#endif",
+        "}  // namespace",
+        ""
+      ]
+    : [
+        "// Streamline API compile probes are omitted because local headers did not satisfy the grounding gate.",
+        "// Provide a local Streamline SDK root with sl.h, sl_dlss.h, slInit, slShutdown, SL_FEATURE_DLSS, and slDLSSGetOptimalSettings before enabling real API code.",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_H 0",
+        "#define NVIDIA_STREAMLINE_BRIDGE_HAS_SL_DLSS_H 0",
+        ""
+      ];
+  const supportReason = headerGrounded
+    ? "Runtime feature support query is still required before enabling DLSS SR/DLAA."
+    : `Header grounding blocked real API output: ${apiGate.reason}`;
+  return [
+    "#include \"NvidiaStreamlineBridge.h\"",
+    "",
+    ...compileProbeLines,
+    "namespace nvidia::streamline {",
+    "",
+    "bool NvidiaStreamlineBridge::Initialize(const InitDesc& desc) {",
+    "  desc_ = desc;",
+    "  hostDeviceReady_ = desc.device != nullptr && desc.commandQueue != nullptr;",
+    "  runtimeSupportQueried_ = false;",
+    "  dlssRuntimeSupported_ = false;",
+    "  if (!hostDeviceReady_) {",
+    "    lastError_ = \"D3D12 device and command queue are required before Streamline initialization.\";",
+    "    return false;",
+    "  }",
+    "  if (!desc.streamlineSdkRoot || !desc.streamlineSdkRoot[0]) {",
+    "    lastError_ = \"streamlineSdkRoot must point to a local, license-approved Streamline SDK path.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): call the version-matched Streamline initialization entry point from local headers after signature review.",
+    "  // TODO(host): configure logging to desc.logDirectory and preserve logs as local validation artifacts.",
+    "  lastError_ = \"Initialized host-side bridge. Streamline runtime calls are not wired yet.\";",
+    "  return true;",
+    "}",
+    "",
+    "void NvidiaStreamlineBridge::Shutdown() {",
+    "  // TODO(host): call the version-matched Streamline shutdown entry point after real initialization is wired.",
+    "  hostDeviceReady_ = false;",
+    "  runtimeSupportQueried_ = false;",
+    "  dlssRuntimeSupported_ = false;",
+    "  lastError_ = \"Shutdown complete.\";",
+    "}",
+    "",
+    "DlssFeatureSupport NvidiaStreamlineBridge::QueryDlssSupport() const {",
+    "  DlssFeatureSupport support{};",
+    `  support.streamlineHeadersDetected = ${headerGrounded ? "true" : "false"};`,
+    "#if defined(SL_FEATURE_DLSS)",
+    "  support.dlssFeatureConstantObserved = true;",
+    "#endif",
+    `  support.apiSymbolsCompileProbed = ${headerGrounded ? "true" : "false"};`,
+    "  support.runtimeSupported = false;",
+    `  support.reason = \"${escapeCppString(supportReason)}\";`,
+    "  return support;",
+    "}",
+    "",
+    "DlssQualitySettings NvidiaStreamlineBridge::BuildQualitySettings(DlssQualityMode mode, std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight) const {",
+    "  DlssQualitySettings settings{};",
+    "  settings.mode = mode;",
+    "  settings.inputWidth = inputWidth;",
+    "  settings.inputHeight = inputHeight;",
+    "  settings.outputWidth = outputWidth;",
+    "  settings.outputHeight = outputHeight;",
+    "  settings.dlaa = mode == DlssQualityMode::NativeDlaa;",
+    "  return settings;",
+    "}",
+    "",
+    "bool NvidiaStreamlineBridge::EvaluateSuperResolution(const DlssFrameInputs& inputs, const DlssQualitySettings& settings) {",
+    "  if (!hostDeviceReady_) {",
+    "    lastError_ = \"Bridge is not initialized with a D3D12 device and command queue.\";",
+    "    return false;",
+    "  }",
+    "  if (!inputs.HasRequiredResourcesForSr()) {",
+    "    lastError_ = \"Host renderer must map color, depth, motion vectors, command list, command queue, and dimensions before DLSS SR/DLAA evaluation.\";",
+    "    return false;",
+    "  }",
+    "  if (!inputs.exposure) {",
+    "    lastError_ = \"Exposure resource mapping is still TODO for this host renderer.\";",
+    "    return false;",
+    "  }",
+    "  if (settings.outputWidth == 0 || settings.outputHeight == 0) {",
+    "    lastError_ = \"Output dimensions are required.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): tag color, depth, motion vectors, jitter, exposure, reset, command list, and command queue using the exact local Streamline SDK signatures.",
+    "  // TODO(host): run the runtime DLSS feature requirement query before setting dlssRuntimeSupported_ to true.",
+    "  lastError_ = \"DLSS SR/DLAA runtime call is intentionally blocked until resource tagging and support query are implemented.\";",
+    "  return false;",
+    "}",
+    "",
+    "}  // namespace nvidia::streamline",
+    "",
+    `// Kit readiness generated as: ${readiness.state}.`
+  ];
+}
+
+function d3d12StreamlineCmakeWiring() {
+  return [
+    "# D3D12 Streamline DLSS SR/DLAA implementation kit wiring.",
+    "# Include this from the renderer CMakeLists.txt only after reviewing the generated bridge files.",
+    "",
+    "set(NVIDIA_STREAMLINE_SDK_ROOT \"\" CACHE PATH \"Path to a local, user-provided NVIDIA Streamline SDK root\")",
+    "set(NVIDIA_STREAMLINE_LIBRARY_DIR \"\" CACHE PATH \"Optional Streamline library directory\")",
+    "option(NVIDIA_STREAMLINE_ENABLE_REAL_API \"Enable compile-time Streamline API probes in NvidiaStreamlineBridge\" OFF)",
+    "",
+    "if(NVIDIA_STREAMLINE_ENABLE_REAL_API)",
+    "  if(NOT NVIDIA_STREAMLINE_SDK_ROOT)",
+    "    message(FATAL_ERROR \"Set NVIDIA_STREAMLINE_SDK_ROOT to a local Streamline SDK root. This kit does not download SDKs.\")",
+    "  endif()",
+    "  set(NVIDIA_STREAMLINE_INCLUDE_DIR \"${NVIDIA_STREAMLINE_SDK_ROOT}/include\" CACHE PATH \"Streamline include directory\")",
+    "  if(NOT EXISTS \"${NVIDIA_STREAMLINE_INCLUDE_DIR}/sl.h\")",
+    "    message(FATAL_ERROR \"Streamline sl.h not found under ${NVIDIA_STREAMLINE_INCLUDE_DIR}\")",
+    "  endif()",
+    "endif()",
+    "",
+    "add_library(nvidia_streamline_dlss_bridge",
+    "  src/nvidia/streamline/NvidiaStreamlineBridge.cpp",
+    ")",
+    "target_include_directories(nvidia_streamline_dlss_bridge PUBLIC",
+    "  \"${CMAKE_CURRENT_LIST_DIR}/../src\"",
+    ")",
+    "if(NVIDIA_STREAMLINE_ENABLE_REAL_API)",
+    "  target_include_directories(nvidia_streamline_dlss_bridge PUBLIC \"${NVIDIA_STREAMLINE_INCLUDE_DIR}\")",
+    "  target_compile_definitions(nvidia_streamline_dlss_bridge PUBLIC NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API=1)",
+    "  if(NVIDIA_STREAMLINE_LIBRARY_DIR)",
+    "    target_link_directories(nvidia_streamline_dlss_bridge PUBLIC \"${NVIDIA_STREAMLINE_LIBRARY_DIR}\")",
+    "  endif()",
+    "else()",
+    "  target_compile_definitions(nvidia_streamline_dlss_bridge PUBLIC NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API=0)",
+    "endif()",
+    ""
+  ];
+}
+
+function d3d12StreamlineMsbuildProps() {
+  return [
+    "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+    "<Project ToolsVersion=\"Current\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">",
+    "  <PropertyGroup>",
+    "    <NvidiaStreamlineSdkRoot Condition=\"'$(NvidiaStreamlineSdkRoot)' == ''\"></NvidiaStreamlineSdkRoot>",
+    "    <NvidiaStreamlineEnableRealApi Condition=\"'$(NvidiaStreamlineEnableRealApi)' == ''\">false</NvidiaStreamlineEnableRealApi>",
+    "  </PropertyGroup>",
+    "  <ItemDefinitionGroup Condition=\"'$(NvidiaStreamlineEnableRealApi)' == 'true'\">",
+    "    <ClCompile>",
+    "      <AdditionalIncludeDirectories>$(NvidiaStreamlineSdkRoot)\\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>",
+    "      <PreprocessorDefinitions>NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>",
+    "    </ClCompile>",
+    "    <Link>",
+    "      <AdditionalLibraryDirectories>$(NvidiaStreamlineSdkRoot)\\lib\\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>",
+    "    </Link>",
+    "  </ItemDefinitionGroup>",
+    "  <ItemDefinitionGroup Condition=\"'$(NvidiaStreamlineEnableRealApi)' != 'true'\">",
+    "    <ClCompile>",
+    "      <PreprocessorDefinitions>NVIDIA_STREAMLINE_BRIDGE_ENABLE_REAL_API=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>",
+    "    </ClCompile>",
+    "  </ItemDefinitionGroup>",
+    "</Project>",
+    ""
+  ];
+}
+
+function d3d12StreamlineKitNotes(readiness, validationHarness) {
+  return [
+    "# D3D12 Streamline DLSS SR/DLAA Kit",
+    "",
+    `Readiness state: ${readiness.state}`,
+    `Real API implementation allowed: ${readiness.real_api_implementation_allowed ? "yes" : "no"}`,
+    `Detected SDK root: ${readiness.streamline_sdk_requirement.detected_sdk_root || "missing"}`,
+    `Build system state: ${readiness.build_system_detection.state}`,
+    "",
+    "## Scope",
+    "",
+    "- D3D12 custom renderer only.",
+    "- DLSS Super Resolution and DLAA only.",
+    "- No other DLSS feature path is generated by this kit.",
+    "- No NVIDIA SDK download, binary copy, binary packaging, or redistribution is performed.",
+    "",
+    "## Host Renderer TODO Boundaries",
+    "",
+    ...readiness.host_resource_todo_boundaries.map((item) => `- ${item}`),
+    "",
+    "## Compile Commands",
+    "",
+    ...validationHarness.compile_commands.map((item) => `- \`${item}\``),
+    "",
+    "## Runtime Support Query Checklist",
+    "",
+    ...validationHarness.runtime_support_query_checklist.map((item) => `- ${item}`),
+    "",
+    "## Streamline Logs",
+    "",
+    `- Configured app-local log directory: \`${validationHarness.streamline_log_path.configured_app_log_directory}\``,
+    `- ${validationHarness.streamline_log_path.note}`,
+    "",
+    "## Nsight Capture Checklist",
+    "",
+    ...validationHarness.nsight_capture_checklist.map((item) => `- ${item}`),
+    "",
+    "## Blockers",
+    "",
+    ...(readiness.blockers.length ? readiness.blockers.map((item) => `- ${item}`) : ["- None from static inspection."]),
+    ""
+  ];
+}
+
+function escapeCppString(value) {
+  return String(value || "").replaceAll("\\", "\\\\").replaceAll("\"", "\\\"");
+}
+
+function rtxRayTracingContextHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "struct ID3D12Device;",
+    "struct ID3D12Device5;",
+    "struct ID3D12GraphicsCommandList4;",
+    "struct ID3D12CommandQueue;",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "struct RtxRayTracingContextDesc {",
+    "  ID3D12Device* device = nullptr;",
+    "  ID3D12CommandQueue* graphicsQueue = nullptr;",
+    "  const char* shaderCompilerPath = nullptr;",
+    "  const char* captureLabel = \"basic-dxr-shadows-reflections\";",
+    "};",
+    "",
+    "struct RtxRayTracingFeatureSupport {",
+    "  bool deviceReady = false;",
+    "  bool featureQueryRan = false;",
+    "  bool rayTracingSupported = false;",
+    "  const char* reason = \"Feature query has not run.\";",
+    "};",
+    "",
+    "class RtxRayTracingContext final {",
+    " public:",
+    "  bool Initialize(const RtxRayTracingContextDesc& desc);",
+    "  void Shutdown();",
+    "  RtxRayTracingFeatureSupport QueryFeatureSupport();",
+    "  bool IsReady() const { return initialized_ && support_.rayTracingSupported; }",
+    "  const RtxRayTracingFeatureSupport& Support() const { return support_; }",
+    "",
+    " private:",
+    "  RtxRayTracingContextDesc desc_{};",
+    "  ID3D12Device5* device5_ = nullptr;",
+    "  bool initialized_ = false;",
+    "  RtxRayTracingFeatureSupport support_{};",
+    "};",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function rtxRayTracingContextCpp() {
+  return [
+    "#include \"RtxRayTracingContext.h\"",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "bool RtxRayTracingContext::Initialize(const RtxRayTracingContextDesc& desc) {",
+    "  desc_ = desc;",
+    "  initialized_ = false;",
+    "  support_ = {};",
+    "  if (!desc.device || !desc.graphicsQueue) {",
+    "    support_.reason = \"D3D12 device and graphics queue are required.\";",
+    "    return false;",
+    "  }",
+    "  support_.deviceReady = true;",
+    "  // TODO(host): Query ID3D12Device5 from desc.device after including the project D3D12 headers.",
+    "  // TODO(host): Query D3D12_FEATURE_D3D12_OPTIONS5 and D3D12_RAYTRACING_TIER before enabling DXR UI.",
+    "  initialized_ = true;",
+    "  support_.reason = \"Host device accepted; DXR feature query still must be wired.\";",
+    "  return true;",
+    "}",
+    "",
+    "void RtxRayTracingContext::Shutdown() {",
+    "  device5_ = nullptr;",
+    "  initialized_ = false;",
+    "  support_ = {};",
+    "}",
+    "",
+    "RtxRayTracingFeatureSupport RtxRayTracingContext::QueryFeatureSupport() {",
+    "  support_.featureQueryRan = true;",
+    "  if (!initialized_) {",
+    "    support_.rayTracingSupported = false;",
+    "    support_.reason = \"Context is not initialized.\";",
+    "    return support_;",
+    "  }",
+    "  // TODO(host): Set rayTracingSupported only after D3D12_RAYTRACING_TIER is confirmed on the runtime device.",
+    "  support_.rayTracingSupported = false;",
+    "  support_.reason = \"Wire D3D12 ray tracing tier query before claiming support.\";",
+    "  return support_;",
+    "}",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function accelerationStructureBuilderHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "struct ID3D12GraphicsCommandList4;",
+    "struct ID3D12Resource;",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "struct MeshGeometryView {",
+    "  ID3D12Resource* vertexBuffer = nullptr;",
+    "  ID3D12Resource* indexBuffer = nullptr;",
+    "  std::uint32_t vertexCount = 0;",
+    "  std::uint32_t indexCount = 0;",
+    "  std::uint32_t vertexStrideBytes = 0;",
+    "};",
+    "",
+    "struct InstanceView {",
+    "  std::uint32_t instanceId = 0;",
+    "  std::uint32_t meshIndex = 0;",
+    "  float transform[12] = {};",
+    "};",
+    "",
+    "struct AccelerationStructureInputs {",
+    "  const MeshGeometryView* meshes = nullptr;",
+    "  std::uint32_t meshCount = 0;",
+    "  const InstanceView* instances = nullptr;",
+    "  std::uint32_t instanceCount = 0;",
+    "};",
+    "",
+    "class AccelerationStructureBuilder final {",
+    " public:",
+    "  bool BuildBlas(ID3D12GraphicsCommandList4* commandList, const AccelerationStructureInputs& inputs);",
+    "  bool BuildTlas(ID3D12GraphicsCommandList4* commandList, const AccelerationStructureInputs& inputs);",
+    "  ID3D12Resource* TlasResource() const { return tlasResource_; }",
+    "  const char* LastError() const { return lastError_; }",
+    "",
+    " private:",
+    "  ID3D12Resource* tlasResource_ = nullptr;",
+    "  const char* lastError_ = \"Acceleration structures have not been built.\";",
+    "};",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function accelerationStructureBuilderCpp() {
+  return [
+    "#include \"AccelerationStructureBuilder.h\"",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "bool AccelerationStructureBuilder::BuildBlas(ID3D12GraphicsCommandList4* commandList, const AccelerationStructureInputs& inputs) {",
+    "  if (!commandList || !inputs.meshes || inputs.meshCount == 0) {",
+    "    lastError_ = \"BLAS build requires command list and mesh geometry.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): Convert MeshGeometryView into D3D12_RAYTRACING_GEOMETRY_DESC records.",
+    "  // TODO(host): Allocate scratch/result buffers and call BuildRaytracingAccelerationStructure.",
+    "  lastError_ = \"BLAS build is a host-renderer TODO.\";",
+    "  return false;",
+    "}",
+    "",
+    "bool AccelerationStructureBuilder::BuildTlas(ID3D12GraphicsCommandList4* commandList, const AccelerationStructureInputs& inputs) {",
+    "  if (!commandList || !inputs.instances || inputs.instanceCount == 0) {",
+    "    lastError_ = \"TLAS build requires command list and instance data.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): Upload D3D12_RAYTRACING_INSTANCE_DESC records and build the TLAS.",
+    "  // TODO(host): Insert required UAV/resource barriers before DispatchRays.",
+    "  lastError_ = \"TLAS build is a host-renderer TODO.\";",
+    "  return false;",
+    "}",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function shaderBindingTableBuilderHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "struct ShaderBindingTableLayout {",
+    "  std::uint32_t raygenRecordSize = 0;",
+    "  std::uint32_t missRecordSize = 0;",
+    "  std::uint32_t hitGroupRecordSize = 0;",
+    "  std::uint32_t missRecordCount = 0;",
+    "  std::uint32_t hitGroupRecordCount = 0;",
+    "};",
+    "",
+    "class ShaderBindingTableBuilder final {",
+    " public:",
+    "  bool Configure(const ShaderBindingTableLayout& layout);",
+    "  bool Build();",
+    "  const ShaderBindingTableLayout& Layout() const { return layout_; }",
+    "  const char* LastError() const { return lastError_; }",
+    "",
+    " private:",
+    "  ShaderBindingTableLayout layout_{};",
+    "  const char* lastError_ = \"SBT has not been configured.\";",
+    "};",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function shaderBindingTableBuilderCpp() {
+  return [
+    "#include \"ShaderBindingTableBuilder.h\"",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "bool ShaderBindingTableBuilder::Configure(const ShaderBindingTableLayout& layout) {",
+    "  if (layout.raygenRecordSize == 0 || layout.missRecordSize == 0 || layout.hitGroupRecordSize == 0) {",
+    "    lastError_ = \"Raygen, miss, and hit-group record sizes are required.\";",
+    "    return false;",
+    "  }",
+    "  layout_ = layout;",
+    "  lastError_ = \"SBT layout configured; GPU buffer build remains TODO.\";",
+    "  return true;",
+    "}",
+    "",
+    "bool ShaderBindingTableBuilder::Build() {",
+    "  if (layout_.raygenRecordSize == 0) {",
+    "    lastError_ = \"Configure SBT layout before Build.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): Allocate upload/default buffers for raygen, miss, and hit-group records.",
+    "  // TODO(host): Copy shader identifiers and local root data from the final state object.",
+    "  lastError_ = \"SBT GPU records are a host-renderer TODO.\";",
+    "  return false;",
+    "}",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function rayTracingPassHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"AccelerationStructureBuilder.h\"",
+    "#include \"RtxRayTracingContext.h\"",
+    "#include \"ShaderBindingTableBuilder.h\"",
+    "",
+    "struct ID3D12GraphicsCommandList4;",
+    "struct ID3D12Resource;",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "enum class RayTracingMode {",
+    "  Shadows,",
+    "  Reflections",
+    "};",
+    "",
+    "struct RayTracingPassInputs {",
+    "  ID3D12GraphicsCommandList4* commandList = nullptr;",
+    "  ID3D12Resource* output = nullptr;",
+    "  ID3D12Resource* depth = nullptr;",
+    "  ID3D12Resource* normal = nullptr;",
+    "  ID3D12Resource* material = nullptr;",
+    "  std::uint32_t width = 0;",
+    "  std::uint32_t height = 0;",
+    "  RayTracingMode mode = RayTracingMode::Shadows;",
+    "  bool fallbackEnabled = true;",
+    "};",
+    "",
+    "class RayTracingPass final {",
+    " public:",
+    "  bool Initialize(RtxRayTracingContext* context, AccelerationStructureBuilder* accelerationStructures, ShaderBindingTableBuilder* sbt);",
+    "  bool Execute(const RayTracingPassInputs& inputs);",
+    "  const char* LastError() const { return lastError_; }",
+    "",
+    " private:",
+    "  RtxRayTracingContext* context_ = nullptr;",
+    "  AccelerationStructureBuilder* accelerationStructures_ = nullptr;",
+    "  ShaderBindingTableBuilder* sbt_ = nullptr;",
+    "  const char* lastError_ = \"RayTracingPass has not initialized.\";",
+    "};",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function rayTracingPassCpp() {
+  return [
+    "#include \"RayTracingPass.h\"",
+    "",
+    "namespace nvidia::dxr {",
+    "",
+    "bool RayTracingPass::Initialize(RtxRayTracingContext* context, AccelerationStructureBuilder* accelerationStructures, ShaderBindingTableBuilder* sbt) {",
+    "  context_ = context;",
+    "  accelerationStructures_ = accelerationStructures;",
+    "  sbt_ = sbt;",
+    "  if (!context_ || !accelerationStructures_ || !sbt_) {",
+    "    lastError_ = \"Context, acceleration structures, and SBT are required.\";",
+    "    return false;",
+    "  }",
+    "  lastError_ = \"Initialized; shader pipeline/state object creation remains TODO.\";",
+    "  return true;",
+    "}",
+    "",
+    "bool RayTracingPass::Execute(const RayTracingPassInputs& inputs) {",
+    "  if (!context_ || !context_->IsReady()) {",
+    "    lastError_ = \"DXR context is not ready; keep raster fallback active.\";",
+    "    return false;",
+    "  }",
+    "  if (!inputs.commandList || !inputs.output || !inputs.depth || !inputs.normal || !inputs.material || inputs.width == 0 || inputs.height == 0) {",
+    "    lastError_ = \"RayTracingPass requires command list, output, depth, normal, material, and dimensions.\";",
+    "    return false;",
+    "  }",
+    "  if (!accelerationStructures_->TlasResource()) {",
+    "    lastError_ = \"TLAS is not available.\";",
+    "    return false;",
+    "  }",
+    "  // TODO(host): Bind state object, global/local root signatures, descriptor heap, TLAS, G-buffer/material resources, and SBT.",
+    "  // TODO(host): DispatchRays for a first visible shadows/reflections pass, then composite with the existing render graph.",
+    "  lastError_ = \"DispatchRays is intentionally blocked until host renderer bindings are reviewed.\";",
+    "  return false;",
+    "}",
+    "",
+    "}  // namespace nvidia::dxr",
+    ""
+  ];
+}
+
+function rayTracingCommonHlsl() {
+  return [
+    "#ifndef NVIDIA_DXR_RAYTRACING_COMMON_HLSL",
+    "#define NVIDIA_DXR_RAYTRACING_COMMON_HLSL",
+    "",
+    "struct RayPayload",
+    "{",
+    "  float3 radiance;",
+    "  float visibility;",
+    "  uint hitKind;",
+    "};",
+    "",
+    "struct ShadowPayload",
+    "{",
+    "  bool occluded;",
+    "};",
+    "",
+    "struct Attributes",
+    "{",
+    "  float2 barycentrics;",
+    "};",
+    "",
+    "cbuffer RayTracingConstants : register(b0)",
+    "{",
+    "  float4x4 gInvViewProjection;",
+    "  float3 gCameraPosition;",
+    "  uint gMode;",
+    "  float3 gLightDirection;",
+    "  uint gFrameIndex;",
+    "};",
+    "",
+    "RaytracingAccelerationStructure gScene : register(t0);",
+    "Texture2D<float> gDepth : register(t1);",
+    "Texture2D<float4> gNormalRoughness : register(t2);",
+    "Texture2D<float4> gMaterial : register(t3);",
+    "RWTexture2D<float4> gOutput : register(u0);",
+    "",
+    "#endif",
+    ""
+  ];
+}
+
+function rayTracingRaygenHlsl() {
+  return [
+    "#include \"RayTracingCommon.hlsl\"",
+    "",
+    "[shader(\"raygeneration\")]",
+    "void RayGen()",
+    "{",
+    "  uint2 pixel = DispatchRaysIndex().xy;",
+    "  uint2 size = DispatchRaysDimensions().xy;",
+    "  if (pixel.x >= size.x || pixel.y >= size.y) return;",
+    "",
+    "  float2 uv = (float2(pixel) + 0.5f) / float2(size);",
+    "  float depth = gDepth.Load(int3(pixel, 0));",
+    "  RayPayload payload;",
+    "  payload.radiance = float3(0.0f, 0.0f, 0.0f);",
+    "  payload.visibility = 1.0f;",
+    "  payload.hitKind = 0u;",
+    "",
+    "  RayDesc ray;",
+    "  ray.Origin = gCameraPosition;",
+    "  ray.Direction = normalize(float3(uv * 2.0f - 1.0f, 1.0f));",
+    "  ray.TMin = 0.001f;",
+    "  ray.TMax = 100000.0f;",
+    "",
+    "  TraceRay(gScene, RAY_FLAG_NONE, 0xFF, 0, 1, 0, ray, payload);",
+    "  gOutput[pixel] = float4(payload.radiance, payload.visibility);",
+    "}",
+    ""
+  ];
+}
+
+function rayTracingMissHlsl() {
+  return [
+    "#include \"RayTracingCommon.hlsl\"",
+    "",
+    "[shader(\"miss\")]",
+    "void Miss(inout RayPayload payload)",
+    "{",
+    "  payload.radiance = float3(0.0f, 0.0f, 0.0f);",
+    "  payload.visibility = 1.0f;",
+    "  payload.hitKind = 0u;",
+    "}",
+    ""
+  ];
+}
+
+function rayTracingClosestHitHlsl() {
+  return [
+    "#include \"RayTracingCommon.hlsl\"",
+    "",
+    "[shader(\"closesthit\")]",
+    "void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes)",
+    "{",
+    "  float3 normal = normalize(float3(attributes.barycentrics, 1.0f - attributes.barycentrics.x - attributes.barycentrics.y));",
+    "  float nDotL = saturate(dot(normal, -normalize(gLightDirection)));",
+    "  payload.radiance = float3(nDotL, nDotL, nDotL);",
+    "  payload.visibility = nDotL > 0.0f ? 1.0f : 0.0f;",
+    "  payload.hitKind = 1u;",
+    "}",
+    ""
+  ];
+}
+
+function d3d12DxrCmakeWiring() {
+  return [
+    "# D3D12 DXR starter-kit wiring.",
+    "# Include from the renderer CMakeLists.txt after reviewing generated sources.",
+    "",
+    "option(NVIDIA_DXR_STARTER_ENABLE \"Enable generated D3D12 DXR starter kit\" OFF)",
+    "set(NVIDIA_DXR_SHADER_OUTPUT_DIR \"${CMAKE_BINARY_DIR}/generated/shaders/dxr\" CACHE PATH \"Compiled DXIL output directory\")",
+    "",
+    "if(NVIDIA_DXR_STARTER_ENABLE)",
+    "  add_library(nvidia_dxr_starter",
+    "    src/nvidia/dxr/RtxRayTracingContext.cpp",
+    "    src/nvidia/dxr/AccelerationStructureBuilder.cpp",
+    "    src/nvidia/dxr/ShaderBindingTableBuilder.cpp",
+    "    src/nvidia/dxr/RayTracingPass.cpp",
+    "  )",
+    "  target_include_directories(nvidia_dxr_starter PUBLIC \"${CMAKE_CURRENT_LIST_DIR}/../src\")",
+    "  target_compile_definitions(nvidia_dxr_starter PUBLIC NVIDIA_DXR_STARTER_ENABLE=1)",
+    "  set(NVIDIA_DXR_SHADER_FILES",
+    "    shaders/nvidia/dxr/RayTracingRaygen.hlsl",
+    "    shaders/nvidia/dxr/RayTracingMiss.hlsl",
+    "    shaders/nvidia/dxr/RayTracingClosestHit.hlsl",
+    "  )",
+    "  message(STATUS \"Review and wire DXC shader compilation for: ${NVIDIA_DXR_SHADER_FILES}\")",
+    "endif()",
+    ""
+  ];
+}
+
+function d3d12DxrStarterKitNotes(readiness, validationChecklist) {
+  return [
+    "# D3D12 DXR Ray Tracing Starter Kit",
+    "",
+    `Readiness state: ${readiness.state}`,
+    `Starter kit generation allowed: ${readiness.starter_kit_generation_allowed ? "yes" : "no"}`,
+    `Build system state: ${readiness.build_system_detection.state}`,
+    "",
+    "## Scope",
+    "",
+    "- D3D12 only.",
+    "- Basic ray-traced shadows/reflections starter only.",
+    "- No RTXDI or NRD full integration.",
+    "- No full path tracer.",
+    "- No invasive host renderer edits without a separate explicit approval.",
+    "",
+    "## Contract Checks",
+    "",
+    ...Object.values(readiness.contract_checks).map((check) => `- ${check.id}: ${check.status}${check.matched_tokens?.length ? ` (${check.matched_tokens.join(", ")})` : ""}`),
+    "",
+    "## Validation Checklist",
+    "",
+    ...validationChecklist.required_steps.map((item) => `- ${item}`),
+    "",
+    "## Blockers",
+    "",
+    ...(readiness.blockers.length ? readiness.blockers.map((item) => `- ${item}`) : ["- None from static inspection."]),
+    "",
+    "## Fallback",
+    "",
+    "- Keep the raster fallback live until feature query, BLAS/TLAS build, shader compile, first visible pass, and Nsight capture all pass.",
+    ""
+  ];
+}
+
+function nrdFrameInputsHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "namespace nvidia::nrd_bridge {",
+    "",
+    "enum class GraphicsApi {",
+    "  Unknown,",
+    "  D3D12,",
+    "  Vulkan",
+    "};",
+    "",
+    "enum class NrdSignalType {",
+    "  Unknown,",
+    "  DiffuseRadiance,",
+    "  SpecularRadiance,",
+    "  ShadowVisibility,",
+    "  AmbientOcclusion",
+    "};",
+    "",
+    "enum class NrdDenoiserFamily {",
+    "  Unknown,",
+    "  ReBLUR,",
+    "  ReLAX,",
+    "  SIGMA",
+    "};",
+    "",
+    "struct NrdResourceView {",
+    "  void* nativeResource = nullptr;",
+    "  const char* debugName = nullptr;",
+    "};",
+    "",
+    "struct NrdMatrix4x4 {",
+    "  float m[16] = {};",
+    "};",
+    "",
+    "struct NrdFrameInputs {",
+    "  NrdSignalType signalType = NrdSignalType::Unknown;",
+    "  NrdResourceView noisySignal;",
+    "  NrdResourceView normalRoughness;",
+    "  NrdResourceView viewZOrDepth;",
+    "  NrdResourceView motionVectors;",
+    "  NrdResourceView output;",
+    "  NrdMatrix4x4 viewToClip;",
+    "  NrdMatrix4x4 clipToView;",
+    "  NrdMatrix4x4 previousViewToClip;",
+    "  std::uint32_t width = 0;",
+    "  std::uint32_t height = 0;",
+    "  bool resetHistory = false;",
+    "  bool cameraCut = false;",
+    "  bool resolutionChanged = false;",
+    "};",
+    "",
+    "struct NrdValidationResult {",
+    "  bool valid = false;",
+    "  const char* reason = \"NrdFrameInputs have not been validated.\";",
+    "};",
+    "",
+    "}  // namespace nvidia::nrd_bridge",
+    ""
+  ];
+}
+
+function nrdDenoiserBridgeHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"NrdFrameInputs.h\"",
+    "",
+    "namespace nvidia::nrd_bridge {",
+    "",
+    "struct NrdDenoiserBridgeDesc {",
+    "  GraphicsApi graphicsApi = GraphicsApi::Unknown;",
+    "  void* nativeDevice = nullptr;",
+    "  void* nativeCommandQueue = nullptr;",
+    "  const char* sdkRoot = nullptr;",
+    "  const char* debugName = \"nrd-denoiser-bridge\";",
+    "};",
+    "",
+    "struct NrdDenoiserSupport {",
+    "  bool initialized = false;",
+    "  bool localHeadersEnabled = false;",
+    "  bool frameInputsValid = false;",
+    "  NrdDenoiserFamily recommendedFamily = NrdDenoiserFamily::Unknown;",
+    "  const char* reason = \"Bridge has not been initialized.\";",
+    "};",
+    "",
+    "class NrdDenoiserBridge final {",
+    " public:",
+    "  bool Initialize(const NrdDenoiserBridgeDesc& desc);",
+    "  void Shutdown();",
+    "  NrdValidationResult ValidateFrameInputs(const NrdFrameInputs& inputs) const;",
+    "  NrdDenoiserFamily SelectDenoiser(const NrdFrameInputs& inputs) const;",
+    "  bool Evaluate(const NrdFrameInputs& inputs);",
+    "  const NrdDenoiserSupport& Support() const { return support_; }",
+    "",
+    " private:",
+    "  NrdDenoiserBridgeDesc desc_{};",
+    "  NrdDenoiserSupport support_{};",
+    "};",
+    "",
+    "}  // namespace nvidia::nrd_bridge",
+    ""
+  ];
+}
+
+function nrdDenoiserBridgeCpp(apiGate, readiness) {
+  const apiModeComment =
+    apiGate.status === "header_grounded"
+      ? "Local NRD headers were detected. Keep real SDK calls limited to observed local symbols after adding exact version-specific code in a reviewed patch."
+      : "Local NRD headers were not sufficient for real SDK calls. This file stays in template-only mode.";
+  return [
+    "#include \"NrdDenoiserBridge.h\"",
+    "",
+    "#if defined(NVIDIA_NRD_BRIDGE_ENABLE_REAL_API) && NVIDIA_NRD_BRIDGE_ENABLE_REAL_API",
+    "#  if defined(__has_include)",
+    "#    if __has_include(<NRD.h>)",
+    "#      include <NRD.h>",
+    "#      define NVIDIA_NRD_BRIDGE_HAS_NRD 1",
+    "#    else",
+    "#      define NVIDIA_NRD_BRIDGE_HAS_NRD 0",
+    "#    endif",
+    "#  else",
+    "#    define NVIDIA_NRD_BRIDGE_HAS_NRD 0",
+    "#  endif",
+    "#else",
+    "#  define NVIDIA_NRD_BRIDGE_HAS_NRD 0",
+    "#endif",
+    "",
+    "namespace nvidia::nrd_bridge {",
+    "",
+    "bool NrdDenoiserBridge::Initialize(const NrdDenoiserBridgeDesc& desc) {",
+    "  desc_ = desc;",
+    "  support_ = {};",
+    "  if (!desc.nativeDevice || desc.graphicsApi == GraphicsApi::Unknown) {",
+    "    support_.reason = \"NRD bridge requires a native graphics device and explicit graphics API.\";",
+    "    return false;",
+    "  }",
+    `  // ${escapeCppString(apiModeComment)}`,
+    "#if NVIDIA_NRD_BRIDGE_HAS_NRD",
+    "  support_.localHeadersEnabled = true;",
+    "#else",
+    "  support_.localHeadersEnabled = false;",
+    "#endif",
+    "  support_.initialized = true;",
+    "  support_.reason = \"Bridge initialized; real NRD dispatch remains blocked until frame inputs and local SDK code are reviewed.\";",
+    "  return true;",
+    "}",
+    "",
+    "void NrdDenoiserBridge::Shutdown() {",
+    "  support_ = {};",
+    "  desc_ = {};",
+    "}",
+    "",
+    "NrdValidationResult NrdDenoiserBridge::ValidateFrameInputs(const NrdFrameInputs& inputs) const {",
+    "  if (!support_.initialized) return {false, \"NRD bridge is not initialized.\"};",
+    "  if (inputs.signalType == NrdSignalType::Unknown) return {false, \"NrdSignalType must identify diffuse, specular, shadow, or occlusion signal.\"};",
+    "  if (!inputs.noisySignal.nativeResource) return {false, \"Noisy diffuse/specular/shadow signal is required.\"};",
+    "  if (!inputs.normalRoughness.nativeResource) return {false, \"Normal and roughness guide buffer is required.\"};",
+    "  if (!inputs.viewZOrDepth.nativeResource) return {false, \"ViewZ or depth buffer is required.\"};",
+    "  if (!inputs.motionVectors.nativeResource) return {false, \"Motion vectors are required for temporal denoising.\"};",
+    "  if (!inputs.output.nativeResource) return {false, \"Denoised output resource is required.\"};",
+    "  if (inputs.width == 0 || inputs.height == 0) return {false, \"Render resolution width and height are required.\"};",
+    "  return {true, \"NRD frame input contract is present; runtime correctness still requires captures and quality validation.\"};",
+    "}",
+    "",
+    "NrdDenoiserFamily NrdDenoiserBridge::SelectDenoiser(const NrdFrameInputs& inputs) const {",
+    "  switch (inputs.signalType) {",
+    "    case NrdSignalType::DiffuseRadiance:",
+    "    case NrdSignalType::SpecularRadiance:",
+    "      return NrdDenoiserFamily::ReBLUR;",
+    "    case NrdSignalType::ShadowVisibility:",
+    "      return NrdDenoiserFamily::SIGMA;",
+    "    case NrdSignalType::AmbientOcclusion:",
+    "      return NrdDenoiserFamily::ReLAX;",
+    "    default:",
+    "      return NrdDenoiserFamily::Unknown;",
+    "  }",
+    "}",
+    "",
+    "bool NrdDenoiserBridge::Evaluate(const NrdFrameInputs& inputs) {",
+    "  NrdValidationResult validation = ValidateFrameInputs(inputs);",
+    "  support_.frameInputsValid = validation.valid;",
+    "  support_.recommendedFamily = SelectDenoiser(inputs);",
+    "  if (!validation.valid) {",
+    "    support_.reason = validation.reason;",
+    "    return false;",
+    "  }",
+    "  if (inputs.cameraCut || inputs.resolutionChanged || inputs.resetHistory) {",
+    "    // TODO(host): Reset NRD history for temporal discontinuities before evaluating the denoiser.",
+    "  }",
+    "  // TODO(host): Convert NrdFrameInputs into the exact local NRD SDK descriptors after inspecting installed headers.",
+    "  // TODO(host): Dispatch ReBLUR/ReLAX/SIGMA only after before/after captures and fallback behavior are defined.",
+    `  support_.reason = "${escapeCppString(readiness.denoising_working_claim_blocker)}";`,
+    "  return false;",
+    "}",
+    "",
+    "}  // namespace nvidia::nrd_bridge",
+    ""
+  ];
+}
+
+function nrdCmakeWiring() {
+  return [
+    "# NRD denoiser bridge wiring.",
+    "# Include from the renderer CMakeLists.txt after reviewing generated sources.",
+    "",
+    "option(NVIDIA_NRD_BRIDGE_ENABLE \"Enable generated NRD denoiser bridge\" OFF)",
+    "option(NVIDIA_NRD_BRIDGE_ENABLE_REAL_API \"Enable compile-time NRD header include gate\" OFF)",
+    "set(NVIDIA_NRD_SDK_ROOT \"\" CACHE PATH \"Path to a local, user-provided NRD SDK root\")",
+    "",
+    "if(NVIDIA_NRD_BRIDGE_ENABLE)",
+    "  add_library(nvidia_nrd_bridge",
+    "    src/nvidia/nrd/NrdDenoiserBridge.cpp",
+    "  )",
+    "  target_include_directories(nvidia_nrd_bridge PUBLIC \"${CMAKE_CURRENT_LIST_DIR}/../src\")",
+    "  if(NVIDIA_NRD_BRIDGE_ENABLE_REAL_API)",
+    "    if(NOT NVIDIA_NRD_SDK_ROOT)",
+    "      message(FATAL_ERROR \"Set NVIDIA_NRD_SDK_ROOT to a local NRD SDK root. This kit does not download SDKs.\")",
+    "    endif()",
+    "    set(NVIDIA_NRD_INCLUDE_DIR \"${NVIDIA_NRD_SDK_ROOT}/include\" CACHE PATH \"NRD include directory\")",
+    "    if(NOT EXISTS \"${NVIDIA_NRD_INCLUDE_DIR}/NRD.h\")",
+    "      message(FATAL_ERROR \"NRD.h not found under ${NVIDIA_NRD_INCLUDE_DIR}\")",
+    "    endif()",
+    "    target_include_directories(nvidia_nrd_bridge PUBLIC \"${NVIDIA_NRD_INCLUDE_DIR}\")",
+    "    target_compile_definitions(nvidia_nrd_bridge PUBLIC NVIDIA_NRD_BRIDGE_ENABLE_REAL_API=1)",
+    "  else()",
+    "    target_compile_definitions(nvidia_nrd_bridge PUBLIC NVIDIA_NRD_BRIDGE_ENABLE_REAL_API=0)",
+    "  endif()",
+    "endif()",
+    ""
+  ];
+}
+
+function nrdDenoiserBridgeNotes(readiness, validationChecklist) {
+  return [
+    "# NRD Denoiser Bridge Kit",
+    "",
+    `Readiness state: ${readiness.state}`,
+    `Bridge generation mode: ${readiness.bridge_generation_mode}`,
+    `Real NRD API calls allowed: ${readiness.real_nrd_api_calls_allowed ? "yes, after reviewed local-header implementation" : "no"}`,
+    `Denoising working claim allowed: ${readiness.denoising_working_claim_allowed ? "yes" : "no"}`,
+    "",
+    "## Scope",
+    "",
+    "- Bridge/adapters only.",
+    "- No claim that denoising works until required buffers, compile validation, frame captures, and quality checks exist.",
+    "- No RTXDI integration.",
+    "- No full NRD integration.",
+    "- No full path tracer.",
+    "- No guessed NRD SDK calls.",
+    "",
+    "## Required Frame Inputs",
+    "",
+    ...readiness.required_frame_inputs.map((item) => `- ${item}`),
+    "",
+    "## Contract Checks",
+    "",
+    ...Object.values(readiness.contract_checks).map((check) => `- ${check.id}: ${check.status}${check.matched_tokens?.length ? ` (${check.matched_tokens.join(", ")})` : ""}`),
+    "",
+    "## ReBLUR Readiness",
+    "",
+    ...validationChecklist.reblur_readiness.map((item) => `- ${item}`),
+    "",
+    "## ReLAX Readiness",
+    "",
+    ...validationChecklist.relax_readiness.map((item) => `- ${item}`),
+    "",
+    "## SIGMA Readiness",
+    "",
+    ...validationChecklist.sigma_readiness.map((item) => `- ${item}`),
+    "",
+    "## Validation Checklist",
+    "",
+    ...validationChecklist.required_steps.map((item) => `- ${item}`),
+    "",
+    "## Blockers",
+    "",
+    ...(readiness.blockers.length ? readiness.blockers.map((item) => `- ${item}`) : ["- None from static inspection."]),
     ""
   ];
 }
@@ -3196,6 +6683,1225 @@ function videoCodecCpp() {
     "}",
     "",
     "}  // namespace nvidia_video",
+    ""
+  ];
+}
+
+function videoCodecNativePipelineKit(context, apiGate, baseValidation) {
+  const readiness = videoCodecNativeReadiness(context, apiGate);
+  const commandPlans = videoCodecCommandPlans(readiness);
+  const validationPlan = videoCodecThroughputQualityValidationPlan(readiness);
+  return {
+    summary: "Create a gated Video Codec SDK / NVENC / NVDEC development kit with native adapters, FFmpeg/GStreamer/PyNvVideoCodec command plans, throughput checks, and quality validation.",
+    implementation_readiness: readiness,
+    contract_checks: readiness.contract_checks,
+    build_system_detection: readiness.build_system_detection,
+    command_plans: commandPlans,
+    validation_harness: validationPlan,
+    files: [
+      scaffoldFile("src/nvidia_video/VideoCodecPipelineTypes.h", "cpp", "Shared codec request, frame format, platform, and validation contracts for NVENC/NVDEC adapters.", videoCodecPipelineTypesHeader()),
+      scaffoldFile("src/nvidia_video/NvencPipelineAdapter.h", "cpp", "NVENC adapter interface for encode capability checks and host frame contracts.", nvencPipelineAdapterHeader()),
+      scaffoldFile("src/nvidia_video/NvencPipelineAdapter.cpp", "cpp", "Header-gated NVENC adapter shell with no guessed SDK calls.", nvencPipelineAdapterCpp(apiGate, readiness)),
+      scaffoldFile("src/nvidia_video/NvdecPipelineAdapter.h", "cpp", "NVDEC adapter interface for decode capability checks and host output frame contracts.", nvdecPipelineAdapterHeader()),
+      scaffoldFile("src/nvidia_video/NvdecPipelineAdapter.cpp", "cpp", "Header-gated NVDEC adapter shell with no guessed SDK calls.", nvdecPipelineAdapterCpp(apiGate, readiness)),
+      scaffoldFile("cmake/NvidiaVideoCodec.cmake", "cmake", "CMake wiring for user-provided Video Codec SDK include roots and native adapters.", videoCodecCmakeWiring()),
+      scaffoldFile("docs/nvidia/video-codec-native-pipeline-kit.md", "markdown", "FFmpeg, GStreamer, PyNvVideoCodec, throughput, quality, and utilization validation plan.", videoCodecNativePipelineNotes(readiness, commandPlans, validationPlan))
+    ],
+    host_repo_edits_required: [
+      "Add the generated NvencPipelineAdapter/NvdecPipelineAdapter files to the narrow native codec or media pipeline target after review.",
+      "Wire the generated CMake include only after setting a local, license-approved Video Codec SDK root.",
+      "For FFmpeg/GStreamer projects, apply command/pipeline changes in a separate reviewable diff and keep software fallback.",
+      "For Python projects, choose PyNvVideoCodec only when dependency and deployment constraints are explicit.",
+      "Validate encode/decode goal, codec, pixel format, bit depth, target platform, GPU capability, and any zero-copy claim before enabling acceleration."
+    ],
+    validation_plan: mergePlan(baseValidation, validationPlan.required_steps),
+    rollback_plan: rollbackPlan("Remove the generated src/nvidia_video adapter files and CMake include/import. Revert FFmpeg/GStreamer/Python command changes separately and keep the original software path available."),
+    sources: sourceRefs(["video-codec-sdk"])
+  };
+}
+
+function videoCodecNativeReadiness(context, apiGate) {
+  const project = context.project || {};
+  const languages = project.languages || [];
+  const buildSystems = project.build_systems || [];
+  const contentPaths = project.content_paths || [];
+  const targetPlatforms = project.target_platforms || [];
+  const projectTypeNames = (project.project_types || []).map((item) => item.name);
+  const text = inventoryText(context.inventory);
+  const frameworks = videoCodecFrameworkDetection(context.inventory, project);
+  const isCodecPipeline = contentPaths.includes("video_encode_decode") || projectTypeNames.includes("video_pipeline") || frameworks.detected.length > 0;
+  const hasNativeOrPython = languages.some((language) => /C\/C\+\+|C\+\+|C\/C|Python|Rust|CUDA/i.test(language));
+  const hasBuildOrScriptPath = buildSystems.some((item) => /CMake|MSBuild|Visual Studio|Python|npm|Cargo/i.test(item));
+  const headers = context.headerGrounding || {};
+  const hasVideoCodecHeaders = Boolean(headers.relevant_headers?.length);
+  const gpuProbe = probeEnvironment();
+  const toolAvailability = videoCodecToolAvailability(frameworks);
+  const checks = {
+    encode_decode_goal: videoCodecEvidenceCheck(context.inventory, "encode_decode_goal", "Encode, decode, transcode, capture, stream, or dataset ingest goal.", ["encode", "decode", "transcode", "capture", "streaming", "dataset", "nvenc", "nvdec"]),
+    codec: videoCodecEvidenceCheck(context.inventory, "codec", "Codec choice such as H.264, HEVC, or AV1.", ["h264", "hevc", "av1", "h.264", "h.265", "codec"]),
+    pixel_format: videoCodecEvidenceCheck(context.inventory, "pixel_format", "Pixel format such as NV12, P010, YUV420P, BGRA, or RGBA.", ["nv12", "p010", "yuv420p", "rgba", "bgra", "pixel format", "pix_fmt"]),
+    bit_depth: videoCodecEvidenceCheck(context.inventory, "bit_depth", "8-bit or 10-bit bit-depth handling.", ["8-bit", "10-bit", "bit depth", "p010", "nv12"]),
+    target_platform: {
+      id: "target_platform",
+      description: "Windows or Linux deployment target.",
+      status: targetPlatforms.some((item) => /Windows|Linux/i.test(item)) || /windows|linux|win32|ubuntu|docker/i.test(text) ? "pass" : "fail",
+      matched_tokens: targetPlatforms,
+      required_tokens_any: ["Windows", "Linux"],
+      blocker: targetPlatforms.some((item) => /Windows|Linux/i.test(item)) || /windows|linux|win32|ubuntu|docker/i.test(text) ? null : "Missing Video Codec readiness evidence: target platform."
+    },
+    gpu_capability: {
+      id: "gpu_capability",
+      description: "GPU/driver/codec support capability check or support-matrix path.",
+      status: gpuProbe.gpu || /gpu capability|codec support|support matrix|nvidia-smi|driver|NV_ENC_CAPS|CUVIDDECODECAPS/i.test(text) ? "pass" : "fail",
+      matched_tokens: [
+        ...(gpuProbe.gpu ? [`nvidia-smi:${gpuProbe.gpu.name}`] : []),
+        ...["gpu capability", "codec support", "support matrix", "nvidia-smi", "driver", "NV_ENC_CAPS", "CUVIDDECODECAPS"].filter((token) => text.includes(lower(token)))
+      ],
+      required_tokens_any: ["nvidia-smi GPU/driver", "codec support matrix", "NV_ENC_CAPS", "CUVIDDECODECAPS"],
+      blocker: gpuProbe.gpu || /gpu capability|codec support|support matrix|nvidia-smi|driver|NV_ENC_CAPS|CUVIDDECODECAPS/i.test(text) ? null : "Missing Video Codec readiness evidence: GPU capability or codec support check path."
+    },
+    zero_copy_claim_validation: videoCodecZeroCopyCheck(context.inventory)
+  };
+  const failedChecks = Object.values(checks).filter((check) => check.status === "fail");
+  const blockers = [];
+  if (!context.root) blockers.push("project_path is required to prove Video Codec SDK pipeline readiness.");
+  if (!hasNativeOrPython) blockers.push("Native or Python video pipeline source was not detected.");
+  if (!isCodecPipeline) blockers.push("Encode/decode/transcode/capture/streaming pipeline evidence was not detected.");
+  if (!hasBuildOrScriptPath) blockers.push("Build system or script/dependency path was not detected.");
+  blockers.push(...failedChecks.map((check) => check.blocker));
+  if (!hasVideoCodecHeaders) blockers.push("Local or project-vendored Video Codec SDK headers were not detected.");
+  if (hasVideoCodecHeaders && !headers.can_generate_real_api_guidance) {
+    blockers.push(`Video Codec SDK headers were detected but required symbols are missing: ${(headers.missing_required_symbols || []).join(", ") || "unknown"}.`);
+  }
+
+  let state = "video_codec_pipeline_ready";
+  if (!context.root) state = "needs_project_inspection_template_only";
+  else if (!hasNativeOrPython || !isCodecPipeline) state = "blocked_not_video_codec_pipeline";
+  else if (failedChecks.length) state = "blocked_missing_video_codec_contract";
+  else if (!hasVideoCodecHeaders) state = "blocked_missing_video_codec_sdk";
+  else if (!headers.can_generate_real_api_guidance) state = "limited_missing_video_codec_symbols_template_only";
+  else if (!hasBuildOrScriptPath) state = "header_grounded_build_or_script_path_unknown";
+
+  return {
+    state,
+    adapter_generation_allowed: !["blocked_not_video_codec_pipeline", "blocked_missing_video_codec_contract"].includes(state),
+    real_video_codec_api_calls_allowed: state === "video_codec_pipeline_ready" || state === "header_grounded_build_or_script_path_unknown",
+    acceleration_working_claim_allowed: false,
+    acceleration_working_claim_blocker: "This kit only proves adapter/command-plan readiness. NVENC/NVDEC acceleration can be claimed only after capability checks, tool logs, throughput, quality metrics, and utilization notes exist.",
+    project_root: context.root,
+    pipeline_detection: {
+      frameworks: frameworks.detected,
+      route: frameworks.primary_route,
+      codec_pipeline_detected: isCodecPipeline,
+      native_or_python_detected: hasNativeOrPython,
+      languages,
+      build_systems: buildSystems,
+      content_paths: contentPaths,
+      target_platforms: targetPlatforms,
+      relevant_files: selectRelevantFiles(context.inventory, frameworks.primary_route === "python" ? "python-video" : "ffmpeg-gstreamer").slice(0, 28)
+    },
+    build_system_detection: {
+      cmake: buildSystems.includes("CMake"),
+      msbuild: buildSystems.includes("MSBuild/Visual Studio"),
+      python: buildSystems.includes("Python"),
+      detected: buildSystems,
+      state: hasBuildOrScriptPath ? "supported_build_or_script_path_detected" : "build_or_script_path_unknown"
+    },
+    video_codec_sdk_requirement: {
+      state: hasVideoCodecHeaders ? "sdk_headers_detected" : "sdk_path_required",
+      detected_sdk_root: headers.detected_sdk_root || null,
+      detected_version: headers.detected_version || null,
+      required_symbols: headers.required_symbols || [],
+      missing_required_symbols: headers.missing_required_symbols || [],
+      relevant_headers: headers.relevant_headers || [],
+      confidence_level: headers.confidence_level || "none",
+      api_generation_gate_status: apiGate.status
+    },
+    tool_availability: toolAvailability,
+    gpu_probe: {
+      gpu: gpuProbe.gpu,
+      nvidia_smi_error: gpuProbe.nvidia_smi_error
+    },
+    contract_checks: checks,
+    required_codec_contract: [
+      "encode/decode goal",
+      "codec",
+      "pixel format",
+      "bit depth",
+      "target platform",
+      "GPU capability",
+      "zero-copy claim validation"
+    ],
+    blockers: [...new Set(blockers.filter(Boolean))],
+    missing_tools_are_graceful_skips: true,
+    unsafe_assumptions_rejected: [
+      "No NVENC/NVDEC support is claimed from static source evidence alone.",
+      "No Video Codec SDK function signature is guessed.",
+      "No zero-copy path is accepted without explicit hwframes/GPU-memory evidence.",
+      "No FFmpeg/GStreamer hardware acceleration is claimed without logs proving the selected path.",
+      "No PSNR, SSIM, VMAF, throughput, or utilization values are fabricated."
+    ]
+  };
+}
+
+function videoCodecFrameworkDetection(inventory, project) {
+  const text = inventoryText(inventory);
+  const detected = [];
+  if (/ffmpeg|libavcodec|libavformat|avcodec|h264_nvenc|hevc_nvenc|av1_nvenc/i.test(text)) detected.push("ffmpeg/libav");
+  if (/gstreamer|gst_|gst-launch|nvh264enc|nvh265enc|nvav1enc|nvh264dec|nvh265dec/i.test(text)) detected.push("gstreamer");
+  if (/PyNvVideoCodec|pynvvideocodec/i.test(text) || (project?.primary_type === "python_video")) detected.push("pynvvideocodec/python");
+  if (/nvEncodeAPI|NV_ENC|nvcuvid|CUVID|NVDEC/i.test(text)) detected.push("video-codec-sdk-cpp");
+  let primary = "generic";
+  if (detected.includes("pynvvideocodec/python")) primary = "python";
+  else if (detected.includes("gstreamer")) primary = "gstreamer";
+  else if (detected.includes("ffmpeg/libav")) primary = "ffmpeg";
+  else if (detected.includes("video-codec-sdk-cpp")) primary = "cpp-sdk";
+  return { detected: [...new Set(detected)], primary_route: primary };
+}
+
+function videoCodecToolAvailability(frameworks) {
+  const ffmpeg = probeCommand("ffmpeg", ["-hide_banner", "-version"], 5000);
+  const ffmpegEncoders = ffmpeg.available ? probeCommand("ffmpeg", ["-hide_banner", "-encoders"], 8000) : null;
+  const ffmpegHwaccels = ffmpeg.available ? probeCommand("ffmpeg", ["-hide_banner", "-hwaccels"], 8000) : null;
+  const gstLaunch = probeCommand("gst-launch-1.0", ["--version"], 5000);
+  const gstInspect = probeCommand("gst-inspect-1.0", ["--version"], 5000);
+  const python = probeCommand("python", ["--version"], 5000);
+  const wanted = frameworks.detected || [];
+  return {
+    ffmpeg: {
+      available: ffmpeg.available,
+      execution_state: ffmpeg.available ? "available" : "plan_only_missing_tool",
+      has_nvenc_encoder_clue: Boolean(ffmpegEncoders?.output && /h264_nvenc|hevc_nvenc|av1_nvenc/i.test(ffmpegEncoders.output)),
+      has_cuda_hwaccel_clue: Boolean(ffmpegHwaccels?.output && /cuda/i.test(ffmpegHwaccels.output)),
+      wanted: wanted.includes("ffmpeg/libav"),
+      error: ffmpeg.error || null
+    },
+    gstreamer: {
+      available: gstLaunch.available || gstInspect.available,
+      execution_state: gstLaunch.available || gstInspect.available ? "available" : "plan_only_missing_tool",
+      wanted: wanted.includes("gstreamer"),
+      error: gstLaunch.error || gstInspect.error || null
+    },
+    python: {
+      available: python.available,
+      execution_state: python.available ? "available" : "plan_only_missing_tool",
+      wanted: wanted.includes("pynvvideocodec/python"),
+      error: python.error || null
+    },
+    note: "Missing local tools are graceful skips. Command plans remain useful, but acceleration is not claimed until logs prove the hardware path."
+  };
+}
+
+function videoCodecEvidenceCheck(inventory, id, description, tokens) {
+  const text = inventoryText(inventory);
+  const matched = tokens.filter((token) => text.includes(lower(token)));
+  return {
+    id,
+    description,
+    status: matched.length ? "pass" : "fail",
+    matched_tokens: matched,
+    required_tokens_any: tokens,
+    blocker: matched.length ? null : `Missing Video Codec readiness evidence: ${description}`
+  };
+}
+
+function videoCodecZeroCopyCheck(inventory) {
+  const text = inventoryText(inventory);
+  const explicitNoClaim = /no zero-copy claim|zero-copy not claimed|not claiming zero-copy|zero copy not claimed|no zero copy claim/i.test(text);
+  const claimed = !explicitNoClaim && /zero-copy|zero copy|no-copy|gpu memory path|gpu-memory path/i.test(text);
+  const evidenceTokens = ["AVHWFramesContext", "hw_frames_ctx", "hwupload_cuda", "cuda surface", "GPU memory", "D3D11 texture", "D3D12 resource", "memory:NVMM", "GstCudaMemory"];
+  const matched = evidenceTokens.filter((token) => text.includes(lower(token)));
+  if (!claimed) {
+    return {
+      id: "zero_copy_claim_validation",
+      description: "Zero-copy claim validation.",
+      status: "pass",
+      claim_state: "not_claimed",
+      matched_tokens: [],
+      required_tokens_any: evidenceTokens,
+      blocker: null
+    };
+  }
+  return {
+    id: "zero_copy_claim_validation",
+    description: "Zero-copy claim validation.",
+    status: matched.length ? "pass" : "fail",
+    claim_state: "claimed",
+    matched_tokens: matched,
+    required_tokens_any: evidenceTokens,
+    blocker: matched.length ? null : "Zero-copy was claimed but no hwframes/GPU-memory evidence was observed."
+  };
+}
+
+function videoCodecCommandPlans(readiness) {
+  const route = readiness.pipeline_detection?.route || "generic";
+  const codec = "<h264|hevc|av1>";
+  const input = "<input.mp4>";
+  const output = "<output.mp4>";
+  return {
+    selected_route: route,
+    ffmpeg: {
+      execution_state: readiness.tool_availability?.ffmpeg?.execution_state || "plan_only_missing_tool",
+      encode_nvenc: [
+        `ffmpeg -hide_banner -y -hwaccel cuda -i "${input}" -c:v h264_nvenc -pix_fmt nv12 -preset p5 -rc vbr -b:v <bitrate> "${output}"`,
+        `ffmpeg -hide_banner -y -hwaccel cuda -i "${input}" -c:v hevc_nvenc -pix_fmt p010le -profile:v main10 -preset p5 -rc vbr -b:v <bitrate> "${output}"`,
+        `ffmpeg -hide_banner -y -hwaccel cuda -i "${input}" -c:v av1_nvenc -pix_fmt p010le -preset p5 -b:v <bitrate> "${output}"`
+      ],
+      decode_nvdec: [
+        `ffmpeg -hide_banner -hwaccel cuda -hwaccel_output_format cuda -i "${input}" -f null -`,
+        `ffmpeg -hide_banner -benchmark -hwaccel cuda -i "${input}" -f null -`
+      ],
+      zero_copy_validation: [
+        "Inspect FFmpeg logs for hwaccel_output_format cuda, hw_frames_ctx, hwupload_cuda, or explicit GPU-frame mapping.",
+        "If logs show software frames or download/upload copies, do not claim zero-copy."
+      ]
+    },
+    gstreamer: {
+      execution_state: readiness.tool_availability?.gstreamer?.execution_state || "plan_only_missing_tool",
+      encode_nvenc: [
+        `gst-launch-1.0 filesrc location="${input}" ! decodebin ! videoconvert ! nvh264enc ! h264parse ! mp4mux ! filesink location="${output}"`,
+        `gst-launch-1.0 filesrc location="${input}" ! decodebin ! videoconvert ! nvh265enc ! h265parse ! mp4mux ! filesink location="${output}"`
+      ],
+      decode_nvdec: [
+        `gst-launch-1.0 filesrc location="${input}" ! qtdemux ! h264parse ! nvh264dec ! fakesink sync=false`,
+        `gst-launch-1.0 filesrc location="${input}" ! decodebin ! fakesink sync=false`
+      ],
+      zero_copy_validation: [
+        "Inspect caps for memory:NVMM, CUDAMemory, D3D11 memory, or project-specific GPU memory features.",
+        "If caps negotiation falls back to system memory, do not claim zero-copy."
+      ]
+    },
+    pynvvideocodec: {
+      execution_state: readiness.tool_availability?.python?.execution_state || "plan_only_missing_tool",
+      route_note: "Use PyNvVideoCodec for Python encode/decode pipelines when dependency, platform, driver, and sample media are approved.",
+      command_plan: [
+        "python -m pip show PyNvVideoCodec",
+        `python <project-script>.py --input "${input}" --codec ${codec} --gpu 0 --validate`
+      ]
+    },
+    cpp_sdk: {
+      execution_state: readiness.real_video_codec_api_calls_allowed ? "header_grounded_adapter_ready" : "template_only_or_blocked",
+      notes: [
+        "Use NvencPipelineAdapter for NVENC session/capability scaffolding after local nvEncodeAPI.h symbols are confirmed.",
+        "Use NvdecPipelineAdapter for NVDEC/CUVID decode capability scaffolding after local nvcuvid.h/cuviddec.h symbols are confirmed."
+      ]
+    }
+  };
+}
+
+function videoCodecThroughputQualityValidationPlan(readiness) {
+  return {
+    required_steps: [
+      "Run codec support/capability checks for the selected GPU, driver, codec, profile, pixel format, and bit depth before enabling NVENC/NVDEC.",
+      "Run encode throughput tests with benchmark logs and confirm FFmpeg/GStreamer/SDK logs show NVENC rather than software fallback.",
+      "Run decode throughput tests with benchmark logs and confirm NVDEC/CUVID/hardware decode rather than software fallback.",
+      "Validate output quality with PSNR and SSIM when a matching reference is available.",
+      "Run VMAF only when local FFmpeg advertises libvmaf support.",
+      "Record encode/decode utilization notes separately from CUDA/graphics utilization.",
+      "Validate any zero-copy claim with explicit hwframes/GPU-memory/caps evidence.",
+      "Preserve software fallback and A/V sync checks until throughput and quality gates pass."
+    ],
+    quality_metrics: {
+      psnr: "Use nvidia_quality_compare metric_set=ffmpeg-psnr-ssim or scripts/validation/quality-compare.mjs when reference/candidate files exist.",
+      ssim: "Use nvidia_quality_compare metric_set=ffmpeg-psnr-ssim or scripts/validation/quality-compare.mjs when reference/candidate files exist.",
+      vmaf: "Use metric_set=ffmpeg-vmaf only when FFmpeg has libvmaf; otherwise skip cleanly and report missing support."
+    },
+    throughput: {
+      ffmpeg: "Use scripts/validation/codec-throughput.mjs or ffmpeg -benchmark logs; missing FFmpeg is a graceful skip.",
+      gstreamer: "Use gst-launch/gst-inspect pipelines and caps/logs; missing GStreamer is a graceful skip.",
+      python: "Use project Python benchmarks around PyNvVideoCodec; missing Python/PyNvVideoCodec is a graceful skip."
+    },
+    utilization_notes: [
+      "NVENC/NVDEC are dedicated hardware engines; do not describe them as CUDA-core encode/decode work.",
+      "Record GPU name, driver, codec, profile, bit depth, chroma, rate control, resolution, fps target, and sample clip.",
+      "Keep CPU fallback logs so acceleration claims can be compared against a baseline."
+    ],
+    missing_tool_policy: readiness.missing_tools_are_graceful_skips
+      ? "Missing FFmpeg, GStreamer, Python, VMAF, or NVIDIA GPU tools should produce plan-only output, not test failure."
+      : "unknown"
+  };
+}
+
+function videoCodecPipelineTypesHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "namespace nvidia_video_codec {",
+    "",
+    "enum class CodecGoal { Unknown, Encode, Decode, Transcode, Capture, Stream, DatasetIngest };",
+    "enum class CodecId { Unknown, H264, HEVC, AV1 };",
+    "enum class PixelFormat { Unknown, NV12, P010, YUV420P, BGRA8, RGBA8 };",
+    "enum class TargetPlatform { Unknown, Windows, Linux };",
+    "",
+    "struct VideoCodecRequest {",
+    "  CodecGoal goal = CodecGoal::Unknown;",
+    "  CodecId codec = CodecId::Unknown;",
+    "  PixelFormat pixelFormat = PixelFormat::Unknown;",
+    "  TargetPlatform platform = TargetPlatform::Unknown;",
+    "  std::uint32_t width = 0;",
+    "  std::uint32_t height = 0;",
+    "  std::uint32_t bitDepth = 8;",
+    "  std::uint32_t fpsNumerator = 0;",
+    "  std::uint32_t fpsDenominator = 1;",
+    "  bool zeroCopyClaimed = false;",
+    "  bool zeroCopyValidated = false;",
+    "};",
+    "",
+    "struct VideoCodecCapability {",
+    "  bool supported = false;",
+    "  const char* reason = \"Capability has not been queried.\";",
+    "};",
+    "",
+    "}  // namespace nvidia_video_codec",
+    ""
+  ];
+}
+
+function nvencPipelineAdapterHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"VideoCodecPipelineTypes.h\"",
+    "",
+    "namespace nvidia_video_codec {",
+    "",
+    "struct NvencAdapterDesc {",
+    "  void* nativeDevice = nullptr;",
+    "  const char* sdkRoot = nullptr;",
+    "  const char* debugName = \"nvenc-pipeline-adapter\";",
+    "};",
+    "",
+    "class NvencPipelineAdapter final {",
+    " public:",
+    "  bool Initialize(const NvencAdapterDesc& desc);",
+    "  void Shutdown();",
+    "  VideoCodecCapability QueryEncodeSupport(const VideoCodecRequest& request) const;",
+    "  VideoCodecCapability ValidateEncodeInput(const VideoCodecRequest& request) const;",
+    "",
+    " private:",
+    "  NvencAdapterDesc desc_{};",
+    "  bool initialized_ = false;",
+    "  bool localHeadersEnabled_ = false;",
+    "};",
+    "",
+    "}  // namespace nvidia_video_codec",
+    ""
+  ];
+}
+
+function nvencPipelineAdapterCpp(apiGate, readiness) {
+  const mode =
+    apiGate.status === "header_grounded"
+      ? "Local Video Codec SDK headers were detected. Add exact version-specific NVENC calls only after reviewing observed local symbols."
+      : "Local Video Codec SDK headers were not sufficient for real NVENC calls. This file stays in template-only mode.";
+  return [
+    "#include \"NvencPipelineAdapter.h\"",
+    "",
+    "#if defined(NVIDIA_VIDEO_CODEC_ENABLE_REAL_API) && NVIDIA_VIDEO_CODEC_ENABLE_REAL_API",
+    "#  if defined(__has_include)",
+    "#    if __has_include(<nvEncodeAPI.h>)",
+    "#      include <nvEncodeAPI.h>",
+    "#      define NVIDIA_VIDEO_CODEC_HAS_NVENC 1",
+    "#    else",
+    "#      define NVIDIA_VIDEO_CODEC_HAS_NVENC 0",
+    "#    endif",
+    "#  else",
+    "#    define NVIDIA_VIDEO_CODEC_HAS_NVENC 0",
+    "#  endif",
+    "#else",
+    "#  define NVIDIA_VIDEO_CODEC_HAS_NVENC 0",
+    "#endif",
+    "",
+    "namespace nvidia_video_codec {",
+    "",
+    "bool NvencPipelineAdapter::Initialize(const NvencAdapterDesc& desc) {",
+    "  desc_ = desc;",
+    "  if (!desc.nativeDevice) return false;",
+    "#if NVIDIA_VIDEO_CODEC_HAS_NVENC",
+    "  localHeadersEnabled_ = true;",
+    "#else",
+    "  localHeadersEnabled_ = false;",
+    "#endif",
+    `  // ${escapeCppString(mode)}`,
+    "  initialized_ = true;",
+    "  return true;",
+    "}",
+    "",
+    "void NvencPipelineAdapter::Shutdown() {",
+    "  initialized_ = false;",
+    "  localHeadersEnabled_ = false;",
+    "  desc_ = {};",
+    "}",
+    "",
+    "VideoCodecCapability NvencPipelineAdapter::ValidateEncodeInput(const VideoCodecRequest& request) const {",
+    "  if (!initialized_) return {false, \"NVENC adapter is not initialized.\"};",
+    "  if (request.goal != CodecGoal::Encode && request.goal != CodecGoal::Transcode && request.goal != CodecGoal::Stream) return {false, \"Encode, transcode, or stream goal is required for NVENC.\"};",
+    "  if (request.codec == CodecId::Unknown) return {false, \"Codec must be H.264, HEVC, or AV1 after capability validation.\"};",
+    "  if (request.pixelFormat == PixelFormat::Unknown) return {false, \"Pixel format must be explicit.\"};",
+    "  if (request.bitDepth != 8 && request.bitDepth != 10) return {false, \"Only validated 8-bit or 10-bit paths should reach the adapter.\"};",
+    "  if (request.zeroCopyClaimed && !request.zeroCopyValidated) return {false, \"Zero-copy was claimed but not validated.\"};",
+    "  return {true, \"Encode input contract is present; GPU codec capability and runtime logs are still required.\"};",
+    "}",
+    "",
+    "VideoCodecCapability NvencPipelineAdapter::QueryEncodeSupport(const VideoCodecRequest& request) const {",
+    "  VideoCodecCapability input = ValidateEncodeInput(request);",
+    "  if (!input.supported) return input;",
+    "  // TODO(host): Query NVENC codec/profile/pixel-format/bit-depth/rate-control support from the local Video Codec SDK headers.",
+    `  return {false, "${escapeCppString(readiness.acceleration_working_claim_blocker)}"};`,
+    "}",
+    "",
+    "}  // namespace nvidia_video_codec",
+    ""
+  ];
+}
+
+function nvdecPipelineAdapterHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"VideoCodecPipelineTypes.h\"",
+    "",
+    "namespace nvidia_video_codec {",
+    "",
+    "struct NvdecAdapterDesc {",
+    "  void* nativeContext = nullptr;",
+    "  const char* sdkRoot = nullptr;",
+    "  const char* debugName = \"nvdec-pipeline-adapter\";",
+    "};",
+    "",
+    "class NvdecPipelineAdapter final {",
+    " public:",
+    "  bool Initialize(const NvdecAdapterDesc& desc);",
+    "  void Shutdown();",
+    "  VideoCodecCapability QueryDecodeSupport(const VideoCodecRequest& request) const;",
+    "  VideoCodecCapability ValidateDecodeInput(const VideoCodecRequest& request) const;",
+    "",
+    " private:",
+    "  NvdecAdapterDesc desc_{};",
+    "  bool initialized_ = false;",
+    "  bool localHeadersEnabled_ = false;",
+    "};",
+    "",
+    "}  // namespace nvidia_video_codec",
+    ""
+  ];
+}
+
+function nvdecPipelineAdapterCpp(apiGate, readiness) {
+  const mode =
+    apiGate.status === "header_grounded"
+      ? "Local Video Codec SDK headers were detected. Add exact version-specific NVDEC/CUVID calls only after reviewing observed local symbols."
+      : "Local Video Codec SDK headers were not sufficient for real NVDEC calls. This file stays in template-only mode.";
+  return [
+    "#include \"NvdecPipelineAdapter.h\"",
+    "",
+    "#if defined(NVIDIA_VIDEO_CODEC_ENABLE_REAL_API) && NVIDIA_VIDEO_CODEC_ENABLE_REAL_API",
+    "#  if defined(__has_include)",
+    "#    if __has_include(<nvcuvid.h>)",
+    "#      include <nvcuvid.h>",
+    "#      define NVIDIA_VIDEO_CODEC_HAS_NVDEC 1",
+    "#    else",
+    "#      define NVIDIA_VIDEO_CODEC_HAS_NVDEC 0",
+    "#    endif",
+    "#  else",
+    "#    define NVIDIA_VIDEO_CODEC_HAS_NVDEC 0",
+    "#  endif",
+    "#else",
+    "#  define NVIDIA_VIDEO_CODEC_HAS_NVDEC 0",
+    "#endif",
+    "",
+    "namespace nvidia_video_codec {",
+    "",
+    "bool NvdecPipelineAdapter::Initialize(const NvdecAdapterDesc& desc) {",
+    "  desc_ = desc;",
+    "  if (!desc.nativeContext) return false;",
+    "#if NVIDIA_VIDEO_CODEC_HAS_NVDEC",
+    "  localHeadersEnabled_ = true;",
+    "#else",
+    "  localHeadersEnabled_ = false;",
+    "#endif",
+    `  // ${escapeCppString(mode)}`,
+    "  initialized_ = true;",
+    "  return true;",
+    "}",
+    "",
+    "void NvdecPipelineAdapter::Shutdown() {",
+    "  initialized_ = false;",
+    "  localHeadersEnabled_ = false;",
+    "  desc_ = {};",
+    "}",
+    "",
+    "VideoCodecCapability NvdecPipelineAdapter::ValidateDecodeInput(const VideoCodecRequest& request) const {",
+    "  if (!initialized_) return {false, \"NVDEC adapter is not initialized.\"};",
+    "  if (request.goal != CodecGoal::Decode && request.goal != CodecGoal::Transcode && request.goal != CodecGoal::DatasetIngest) return {false, \"Decode, transcode, or dataset ingest goal is required for NVDEC.\"};",
+    "  if (request.codec == CodecId::Unknown) return {false, \"Codec must be H.264, HEVC, or AV1 after capability validation.\"};",
+    "  if (request.bitDepth != 8 && request.bitDepth != 10) return {false, \"Only validated 8-bit or 10-bit paths should reach the adapter.\"};",
+    "  if (request.zeroCopyClaimed && !request.zeroCopyValidated) return {false, \"Zero-copy was claimed but not validated.\"};",
+    "  return {true, \"Decode input contract is present; GPU codec capability and runtime logs are still required.\"};",
+    "}",
+    "",
+    "VideoCodecCapability NvdecPipelineAdapter::QueryDecodeSupport(const VideoCodecRequest& request) const {",
+    "  VideoCodecCapability input = ValidateDecodeInput(request);",
+    "  if (!input.supported) return input;",
+    "  // TODO(host): Query NVDEC/CUVID codec/profile/pixel-format/bit-depth support from the local Video Codec SDK headers.",
+    `  return {false, "${escapeCppString(readiness.acceleration_working_claim_blocker)}"};`,
+    "}",
+    "",
+    "}  // namespace nvidia_video_codec",
+    ""
+  ];
+}
+
+function videoCodecCmakeWiring() {
+  return [
+    "# Video Codec SDK native adapter wiring.",
+    "# Include from the native codec/media pipeline CMakeLists.txt after reviewing generated sources.",
+    "",
+    "option(NVIDIA_VIDEO_CODEC_ENABLE \"Enable generated NVENC/NVDEC adapters\" OFF)",
+    "option(NVIDIA_VIDEO_CODEC_ENABLE_REAL_API \"Enable compile-time Video Codec SDK include gate\" OFF)",
+    "set(NVIDIA_VIDEO_CODEC_SDK_ROOT \"\" CACHE PATH \"Path to a local, user-provided Video Codec SDK root\")",
+    "",
+    "if(NVIDIA_VIDEO_CODEC_ENABLE)",
+    "  add_library(nvidia_video_codec_adapters",
+    "    src/nvidia_video/NvencPipelineAdapter.cpp",
+    "    src/nvidia_video/NvdecPipelineAdapter.cpp",
+    "  )",
+    "  target_include_directories(nvidia_video_codec_adapters PUBLIC \"${CMAKE_CURRENT_LIST_DIR}/../src\")",
+    "  if(NVIDIA_VIDEO_CODEC_ENABLE_REAL_API)",
+    "    if(NOT NVIDIA_VIDEO_CODEC_SDK_ROOT)",
+    "      message(FATAL_ERROR \"Set NVIDIA_VIDEO_CODEC_SDK_ROOT to a local Video Codec SDK root. This kit does not download SDKs.\")",
+    "    endif()",
+    "    set(NVIDIA_VIDEO_CODEC_INCLUDE_DIR \"${NVIDIA_VIDEO_CODEC_SDK_ROOT}/include\" CACHE PATH \"Video Codec SDK include directory\")",
+    "    if(NOT EXISTS \"${NVIDIA_VIDEO_CODEC_INCLUDE_DIR}/nvEncodeAPI.h\")",
+    "      message(FATAL_ERROR \"nvEncodeAPI.h not found under ${NVIDIA_VIDEO_CODEC_INCLUDE_DIR}\")",
+    "    endif()",
+    "    target_include_directories(nvidia_video_codec_adapters PUBLIC \"${NVIDIA_VIDEO_CODEC_INCLUDE_DIR}\")",
+    "    target_compile_definitions(nvidia_video_codec_adapters PUBLIC NVIDIA_VIDEO_CODEC_ENABLE_REAL_API=1)",
+    "  else()",
+    "    target_compile_definitions(nvidia_video_codec_adapters PUBLIC NVIDIA_VIDEO_CODEC_ENABLE_REAL_API=0)",
+    "  endif()",
+    "endif()",
+    ""
+  ];
+}
+
+function videoCodecNativePipelineNotes(readiness, commandPlans, validationPlan) {
+  return [
+    "# Video Codec SDK / NVENC / NVDEC Native Pipeline Kit",
+    "",
+    `Readiness state: ${readiness.state}`,
+    `Detected framework route: ${readiness.pipeline_detection.route}`,
+    `Real Video Codec SDK API calls allowed: ${readiness.real_video_codec_api_calls_allowed ? "yes, after reviewed local-header implementation" : "no"}`,
+    `Acceleration working claim allowed: ${readiness.acceleration_working_claim_allowed ? "yes" : "no"}`,
+    "",
+    "## Scope",
+    "",
+    "- Encode/decode/transcode/capture/streaming pipelines.",
+    "- NVENC adapter scaffolding.",
+    "- NVDEC adapter scaffolding.",
+    "- FFmpeg hardware acceleration command plans.",
+    "- GStreamer command plans.",
+    "- PyNvVideoCodec route notes for Python pipelines.",
+    "- No SDK downloads or binary copying.",
+    "",
+    "## Required Contract",
+    "",
+    ...readiness.required_codec_contract.map((item) => `- ${item}`),
+    "",
+    "## Contract Checks",
+    "",
+    ...Object.values(readiness.contract_checks).map((check) => `- ${check.id}: ${check.status}${check.matched_tokens?.length ? ` (${check.matched_tokens.join(", ")})` : check.claim_state ? ` (${check.claim_state})` : ""}`),
+    "",
+    "## Tool Availability",
+    "",
+    `- FFmpeg: ${readiness.tool_availability.ffmpeg.execution_state}`,
+    `- GStreamer: ${readiness.tool_availability.gstreamer.execution_state}`,
+    `- Python: ${readiness.tool_availability.python.execution_state}`,
+    `- ${readiness.tool_availability.note}`,
+    "",
+    "## FFmpeg Command Plans",
+    "",
+    ...commandPlans.ffmpeg.encode_nvenc.map((item) => `- \`${item}\``),
+    ...commandPlans.ffmpeg.decode_nvdec.map((item) => `- \`${item}\``),
+    "",
+    "## GStreamer Command Plans",
+    "",
+    ...commandPlans.gstreamer.encode_nvenc.map((item) => `- \`${item}\``),
+    ...commandPlans.gstreamer.decode_nvdec.map((item) => `- \`${item}\``),
+    "",
+    "## PyNvVideoCodec Route",
+    "",
+    `- ${commandPlans.pynvvideocodec.route_note}`,
+    ...commandPlans.pynvvideocodec.command_plan.map((item) => `- \`${item}\``),
+    "",
+    "## Throughput And Quality Validation",
+    "",
+    ...validationPlan.required_steps.map((item) => `- ${item}`),
+    "",
+    "## Metrics",
+    "",
+    `- PSNR: ${validationPlan.quality_metrics.psnr}`,
+    `- SSIM: ${validationPlan.quality_metrics.ssim}`,
+    `- VMAF: ${validationPlan.quality_metrics.vmaf}`,
+    "",
+    "## Utilization Notes",
+    "",
+    ...validationPlan.utilization_notes.map((item) => `- ${item}`),
+    "",
+    "## Blockers",
+    "",
+    ...(readiness.blockers.length ? readiness.blockers.map((item) => `- ${item}`) : ["- None from static inspection."]),
+    ""
+  ];
+}
+
+function rtxVideoNativePipelineKit(context, apiGate, baseValidation) {
+  const readiness = rtxVideoNativeReadiness(context, apiGate);
+  const validationHarness = rtxVideoValidationHarness(readiness);
+  const files =
+    readiness.state === "rejected_browser_only_requires_native_boundary"
+      ? [
+          scaffoldFile(
+            "docs/nvidia/rtx-video-native-boundary.md",
+            "markdown",
+            "Boundary plan for using RTX Video SDK from a native companion/backend instead of browser-only code.",
+            rtxVideoBrowserBoundaryNotes(readiness)
+          )
+        ]
+      : [
+          scaffoldFile("src/nvidia_video/RtxVideoFrame.h", "cpp", "RTX Video frame, format, API route, and effect-setting contracts.", rtxVideoFrameHeader()),
+          scaffoldFile("src/nvidia_video/RtxVideoEnhancer.h", "cpp", "Native RTX Video enhancer interface for media-player frame enhancement.", rtxVideoEnhancerHeader()),
+          scaffoldFile("src/nvidia_video/RtxVideoEnhancer.cpp", "cpp", "Header-gated RTX Video enhancer shell with explicit frame/effect validation and no guessed SDK calls.", rtxVideoEnhancerCpp(apiGate, readiness)),
+          scaffoldFile("cmake/NvidiaRtxVideo.cmake", "cmake", "CMake wiring for user-provided RTX Video SDK include paths and the generated native adapter.", rtxVideoCmakeWiring()),
+          scaffoldFile("docs/nvidia/rtx-video-native-pipeline-kit.md", "markdown", "Validation harness and integration boundaries for RTX Video SDK media enhancement.", rtxVideoNativePipelineNotes(readiness, validationHarness))
+        ];
+  return {
+    summary: "Create a gated RTX Video SDK native media pipeline kit for Super Resolution, artifact reduction, and SDR-to-HDR. This is separate from DLSS and Optical Flow FRUC.",
+    implementation_readiness: readiness,
+    contract_checks: readiness.contract_checks,
+    build_system_detection: readiness.build_system_detection,
+    validation_harness: validationHarness,
+    files,
+    host_repo_edits_required:
+      readiness.state === "rejected_browser_only_requires_native_boundary"
+        ? [
+            "Do not add RTX Video SDK calls to browser-only code.",
+            "Choose a native companion, Electron/native backend, native app/plugin, or server-side NVIDIA GPU pipeline.",
+            "Define IPC/frame sharing, copy count, latency, media privacy, and process lifetime before adapter generation."
+          ]
+        : [
+            "Add the generated RtxVideoEnhancer.cpp and RtxVideoFrame.h files to the narrow native media-player/video target after review.",
+            "Wire the generated CMake include only after setting a local, license-approved RTX Video SDK root.",
+            "Map host media resources explicitly: decoded input frame, color format, 8-bit/10-bit bit depth, SDR/HDR metadata, DX11/DX12/Vulkan/CUDA route, and output surface ownership.",
+            "Validate Super Resolution, artifact reduction, and SDR-to-HDR independently before exposing user-facing toggles.",
+            "Keep DLSS, Optical Flow FRUC, and Video Codec SDK encode/decode work as separate routes and patches."
+          ],
+    validation_plan: mergePlan(baseValidation, validationHarness.required_steps),
+    rollback_plan: rollbackPlan("Remove the generated src/nvidia_video files and CMake include/import. Keep the original media playback path and output surface untouched."),
+    sources: sourceRefs(["rtx-video-sdk", "nvidia-optical-flow-sdk", "nvidia-dlss"])
+  };
+}
+
+function rtxVideoNativeReadiness(context, apiGate) {
+  const project = context.project || {};
+  const graphicsApis = project.graphics_apis || [];
+  const languages = project.languages || [];
+  const buildSystems = project.build_systems || [];
+  const contentPaths = project.content_paths || [];
+  const projectTypeNames = (project.project_types || []).map((item) => item.name);
+  const isBrowserOnly = project && context.inventory ? isBrowserOnlyProject(project, context.inventory) : false;
+  const isNativeLanguage = languages.some((language) => /C\/C\+\+|C\+\+|C\/C|Rust|Python|CUDA/i.test(language));
+  const hasNativeBuild = buildSystems.some((item) => /CMake|MSBuild|Visual Studio|Python|Cargo/i.test(item));
+  const hasMediaPath = contentPaths.includes("media_playback") || contentPaths.includes("video_encode_decode") || projectTypeNames.includes("video_pipeline");
+  const apiRoute = rtxVideoApiRoute(graphicsApis, context.inventory);
+  const buildSystemDetection = {
+    cmake: buildSystems.includes("CMake"),
+    msbuild: buildSystems.includes("MSBuild/Visual Studio"),
+    python: buildSystems.includes("Python"),
+    detected: buildSystems.filter((item) => /CMake|MSBuild|Visual Studio|Python|Cargo/i.test(item)),
+    state: hasNativeBuild ? "supported_native_build_system_detected" : "native_build_system_unknown"
+  };
+  const headers = context.headerGrounding || {};
+  const hasRtxVideoHeaders = Boolean(headers.relevant_headers?.length);
+  const checks = {
+    input_video_frames: rtxVideoEvidenceCheck(context.inventory, "input_video_frames", "Decoded input video frames before presentation/export.", ["decoded frame", "video frame", "frame surface", "media foundation", "avframe", "input frame"]),
+    color_format: rtxVideoEvidenceCheck(context.inventory, "color_format", "Color format such as NV12, P010, RGBA, or BGRA.", ["nv12", "p010", "rgba", "bgra", "color format", "format"]),
+    bit_depth_8_10: rtxVideoEvidenceCheck(context.inventory, "bit_depth_8_10", "8-bit and/or 10-bit bit-depth handling.", ["8-bit", "10-bit", "bit depth", "p010", "nv12"]),
+    sdr_hdr_path: rtxVideoEvidenceCheck(context.inventory, "sdr_hdr_path", "SDR/HDR metadata and SDR-to-HDR path.", ["sdr", "hdr", "hdr10", "sdr-to-hdr", "sdr to hdr", "color space", "colorspace"]),
+    api_route: {
+      id: "api_route",
+      description: "DX11, DX12, Vulkan, or CUDA native route.",
+      status: apiRoute.status,
+      matched_tokens: apiRoute.matched,
+      required_tokens_any: ["D3D11", "D3D12", "Vulkan", "CUDA", "DX11", "DX12"],
+      blocker: apiRoute.status === "pass" ? null : "Missing RTX Video readiness evidence: DX11/DX12/Vulkan/CUDA native route."
+    },
+    output_surface_ownership: rtxVideoEvidenceCheck(context.inventory, "output_surface_ownership", "Output surface ownership for display or export.", ["output surface", "render target", "present", "display path", "swapchain", "export surface"])
+  };
+  const failedChecks = Object.values(checks).filter((check) => check.status !== "pass");
+  const blockers = [];
+  if (isBrowserOnly) blockers.push("Browser-only project cannot call native RTX Video SDK APIs directly; use a native companion, native app/plugin, Electron/native backend, or server-side NVIDIA GPU pipeline.");
+  if (!context.root) blockers.push("project_path is required to prove media-player/native pipeline readiness.");
+  if (!isNativeLanguage) blockers.push("Native media code was not detected.");
+  if (!hasMediaPath) blockers.push("Media playback or decoded-frame path was not detected.");
+  if (buildSystemDetection.state === "native_build_system_unknown") blockers.push("Native build-system evidence was not detected.");
+  blockers.push(...failedChecks.map((check) => check.blocker));
+  if (!hasRtxVideoHeaders) blockers.push("Local or project-vendored RTX Video SDK headers were not detected.");
+  if (hasRtxVideoHeaders && !headers.can_generate_real_api_guidance) {
+    blockers.push(`RTX Video SDK headers were detected but required symbols are missing: ${(headers.missing_required_symbols || []).join(", ") || "unknown"}.`);
+  }
+
+  let state = "rtx_video_native_pipeline_ready";
+  if (isBrowserOnly) state = "rejected_browser_only_requires_native_boundary";
+  else if (!context.root) state = "needs_project_inspection_template_only";
+  else if (!isNativeLanguage || !hasMediaPath) state = "blocked_not_native_media_project";
+  else if (failedChecks.length) state = "blocked_missing_rtx_video_contract";
+  else if (!hasRtxVideoHeaders) state = "blocked_missing_rtx_video_sdk";
+  else if (!headers.can_generate_real_api_guidance) state = "limited_missing_rtx_video_symbols_template_only";
+  else if (buildSystemDetection.state === "native_build_system_unknown") state = "header_grounded_build_system_unknown";
+
+  return {
+    state,
+    native_pipeline_generation_allowed: !["rejected_browser_only_requires_native_boundary", "blocked_not_native_media_project", "blocked_missing_rtx_video_contract"].includes(state),
+    real_rtx_video_api_calls_allowed: state === "rtx_video_native_pipeline_ready" || state === "header_grounded_build_system_unknown",
+    enhancement_working_claim_allowed: false,
+    enhancement_working_claim_blocker: "This kit only proves native adapter/readiness scaffolding. RTX Video enhancement can be claimed only after the adapter compiles against local SDK headers and SR/artifact-reduction/SDR-to-HDR validation artifacts exist.",
+    project_root: context.root,
+    media_project_detection: {
+      media_path_detected: hasMediaPath,
+      native_language_detected: isNativeLanguage,
+      browser_only: isBrowserOnly,
+      content_paths: contentPaths,
+      project_types: projectTypeNames,
+      languages,
+      relevant_files: selectRelevantFiles(context.inventory, "ffmpeg-gstreamer").slice(0, 24)
+    },
+    build_system_detection: buildSystemDetection,
+    api_route: apiRoute,
+    rtx_video_sdk_requirement: {
+      state: hasRtxVideoHeaders ? "sdk_headers_detected" : "sdk_path_required",
+      detected_sdk_root: headers.detected_sdk_root || null,
+      detected_version: headers.detected_version || null,
+      required_symbols: headers.required_symbols || [],
+      missing_required_symbols: headers.missing_required_symbols || [],
+      relevant_headers: headers.relevant_headers || [],
+      confidence_level: headers.confidence_level || "none",
+      api_generation_gate_status: apiGate.status
+    },
+    contract_checks: checks,
+    required_frame_contract: [
+      "input video frames",
+      "color format",
+      "8-bit/10-bit support",
+      "SDR/HDR path",
+      "DX11/DX12/Vulkan/CUDA route",
+      "output surface ownership"
+    ],
+    explicit_route_separation: {
+      rtx_video_sdk: "Video enhancement: Super Resolution, artifact reduction, and SDR-to-HDR.",
+      dlss_streamline: "Rejected for generic decoded video enhancement; DLSS is for real-time rendered frames.",
+      optical_flow_fruc: "Rejected for enhancement-only goals; Optical Flow FRUC is for frame-rate up-conversion/interpolation.",
+      video_codec_sdk: "Separate encode/decode/transcode control plane; not the enhancement effect route."
+    },
+    native_boundary_recommendation: isBrowserOnly
+      ? {
+          required: true,
+          routes: ["native companion process", "Electron/native backend", "native app/plugin architecture", "server-side NVIDIA GPU pipeline"],
+          reason: "Pure browser code cannot be assumed to call RTX Video SDK directly."
+        }
+      : { required: false },
+    blockers: [...new Set(blockers.filter(Boolean))],
+    unsafe_assumptions_rejected: [
+      "No RTX Video SDK runtime support is claimed from static source evidence alone.",
+      "No RTX Video SDK function signature is guessed.",
+      "No browser-only native SDK access is claimed.",
+      "No SDK download, binary copy, binary packaging, or redistribution is performed.",
+      "No DLSS or Optical Flow FRUC path is generated by this RTX Video enhancement kit."
+    ]
+  };
+}
+
+function rtxVideoApiRoute(graphicsApis, inventory) {
+  const text = inventoryText(inventory);
+  const matched = [];
+  for (const api of ["D3D11", "D3D12", "Vulkan", "CUDA"]) {
+    if (graphicsApis.includes(api) || text.includes(lower(api))) matched.push(api);
+  }
+  if (text.includes("dx11")) matched.push("DX11");
+  if (text.includes("dx12")) matched.push("DX12");
+  return {
+    status: matched.length ? "pass" : "fail",
+    matched: [...new Set(matched)],
+    supported_routes: ["DX11", "DX12", "Vulkan", "CUDA"]
+  };
+}
+
+function rtxVideoEvidenceCheck(inventory, id, description, tokens) {
+  const text = inventoryText(inventory);
+  const matched = tokens.filter((token) => text.includes(lower(token)));
+  return {
+    id,
+    description,
+    status: matched.length ? "pass" : "fail",
+    matched_tokens: matched,
+    required_tokens_any: tokens,
+    blocker: matched.length ? null : `Missing RTX Video readiness evidence: ${description}`
+  };
+}
+
+function rtxVideoValidationHarness(readiness) {
+  const sdkRoot = readiness.rtx_video_sdk_requirement?.detected_sdk_root || "<RTX_VIDEO_SDK_ROOT>";
+  return {
+    required_steps: [
+      "Compile the native RtxVideoEnhancer bridge against the selected local RTX Video SDK headers or keep it in explicit template-only mode.",
+      "Validate Super Resolution with approved 8-bit and 10-bit clips where the local SDK and project frame path support both.",
+      "Validate artifact reduction separately from Super Resolution on low-bitrate source material.",
+      "Validate SDR-to-HDR separately with HDR metadata, display/output path, and visual review notes.",
+      "Measure playback latency, dropped frames, copy count, and throughput without fabricating FPS or quality metrics.",
+      "Preserve the original playback/fallback path and disable RTX Video effects when runtime support or required frame contract is missing."
+    ],
+    compile_commands: [
+      `cmake -S . -B build -DNVIDIA_RTX_VIDEO_SDK_ROOT="${sdkRoot}" -DNVIDIA_RTX_VIDEO_ENABLE_REAL_API=ON`,
+      "cmake --build build --config RelWithDebInfo",
+      `msbuild <YourMediaPlayer>.sln /p:NvidiaRtxVideoSdkRoot="${sdkRoot}" /p:NvidiaRtxVideoEnableRealApi=true /p:Configuration=RelWithDebInfo`
+    ],
+    effect_validation: {
+      super_resolution: [
+        "Input clip and frame format recorded.",
+        "Source and target resolution recorded.",
+        "Before/after still frames or approved output clip captured locally.",
+        "Latency and dropped-frame notes collected."
+      ],
+      artifact_reduction: [
+        "Low-bitrate/compression-artifact source selected.",
+        "Artifact reduction tested independently from upscaling.",
+        "Before/after comparisons and quality notes captured locally."
+      ],
+      sdr_to_hdr: [
+        "Input SDR metadata and output HDR path recorded.",
+        "HDR display/export route validated separately from enhancement.",
+        "Rollback/fallback to SDR path verified."
+      ]
+    },
+    expected_artifacts: [
+      "compile log",
+      "runtime capability log",
+      "effect settings JSON or app config snapshot",
+      "approved before/after frame captures or clips",
+      "latency/throughput/dropped-frame notes",
+      "HDR output validation notes when SDR-to-HDR is enabled"
+    ],
+    safety_notes: [
+      "No SDK download or binary copy.",
+      "No browser-only native SDK claim.",
+      "No DLSS route for decoded video enhancement.",
+      "No Optical Flow FRUC route unless the user asks for frame-rate up-conversion."
+    ]
+  };
+}
+
+function rtxVideoFrameHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include <cstdint>",
+    "",
+    "namespace nvidia_video {",
+    "",
+    "enum class RtxVideoApiRoute {",
+    "  Unknown,",
+    "  D3D11,",
+    "  D3D12,",
+    "  Vulkan,",
+    "  CUDA",
+    "};",
+    "",
+    "enum class RtxVideoColorFormat {",
+    "  Unknown,",
+    "  NV12,",
+    "  P010,",
+    "  RGBA8,",
+    "  BGRA8,",
+    "  RGBA16F",
+    "};",
+    "",
+    "enum class RtxVideoColorSpace {",
+    "  Unknown,",
+    "  SDR_BT709,",
+    "  HDR10_BT2020",
+    "};",
+    "",
+    "struct RtxVideoFrame {",
+    "  void* nativeResource = nullptr;",
+    "  void* nativeDevice = nullptr;",
+    "  void* nativeQueueOrContext = nullptr;",
+    "  RtxVideoApiRoute apiRoute = RtxVideoApiRoute::Unknown;",
+    "  RtxVideoColorFormat format = RtxVideoColorFormat::Unknown;",
+    "  RtxVideoColorSpace colorSpace = RtxVideoColorSpace::Unknown;",
+    "  std::uint32_t width = 0;",
+    "  std::uint32_t height = 0;",
+    "  std::uint32_t bitDepth = 8;",
+    "  std::uint64_t pts100ns = 0;",
+    "  const char* debugName = nullptr;",
+    "};",
+    "",
+    "struct RtxVideoEffectSettings {",
+    "  bool superResolution = false;",
+    "  bool artifactReduction = false;",
+    "  bool sdrToHdr = false;",
+    "  float outputScale = 1.0f;",
+    "  float sharpness = 0.0f;",
+    "  float artifactReductionStrength = 0.0f;",
+    "  bool requireHdrOutputPath = true;",
+    "};",
+    "",
+    "struct RtxVideoEnhancementResult {",
+    "  bool success = false;",
+    "  const char* reason = \"RTX Video enhancement has not run.\";",
+    "};",
+    "",
+    "}  // namespace nvidia_video",
+    ""
+  ];
+}
+
+function rtxVideoEnhancerHeader() {
+  return [
+    "#pragma once",
+    "",
+    "#include \"RtxVideoFrame.h\"",
+    "",
+    "namespace nvidia_video {",
+    "",
+    "struct RtxVideoEnhancerDesc {",
+    "  RtxVideoApiRoute apiRoute = RtxVideoApiRoute::Unknown;",
+    "  void* nativeDevice = nullptr;",
+    "  void* nativeQueueOrContext = nullptr;",
+    "  const char* sdkRoot = nullptr;",
+    "  const char* debugName = \"rtx-video-enhancer\";",
+    "};",
+    "",
+    "struct RtxVideoCapability {",
+    "  bool initialized = false;",
+    "  bool localHeadersEnabled = false;",
+    "  bool inputFrameContractValid = false;",
+    "  bool outputSurfaceOwned = false;",
+    "  const char* reason = \"RtxVideoEnhancer has not been initialized.\";",
+    "};",
+    "",
+    "class RtxVideoEnhancer final {",
+    " public:",
+    "  bool Initialize(const RtxVideoEnhancerDesc& desc);",
+    "  void Shutdown();",
+    "  RtxVideoEnhancementResult ValidateFrame(const RtxVideoFrame& input, const RtxVideoFrame& output, const RtxVideoEffectSettings& settings) const;",
+    "  RtxVideoEnhancementResult Enhance(const RtxVideoFrame& input, const RtxVideoFrame& output, const RtxVideoEffectSettings& settings);",
+    "  const RtxVideoCapability& Capability() const { return capability_; }",
+    "",
+    " private:",
+    "  RtxVideoEnhancerDesc desc_{};",
+    "  RtxVideoCapability capability_{};",
+    "};",
+    "",
+    "}  // namespace nvidia_video",
+    ""
+  ];
+}
+
+function rtxVideoEnhancerCpp(apiGate, readiness) {
+  const apiModeComment =
+    apiGate.status === "header_grounded"
+      ? "Local RTX Video SDK headers were detected. Add exact version-specific calls only after reviewing observed local symbols."
+      : "Local RTX Video SDK headers were not sufficient for real SDK calls. This file stays in template-only mode.";
+  return [
+    "#include \"RtxVideoEnhancer.h\"",
+    "",
+    "#if defined(NVIDIA_RTX_VIDEO_ENABLE_REAL_API) && NVIDIA_RTX_VIDEO_ENABLE_REAL_API",
+    "#  if defined(__has_include)",
+    "#    if __has_include(<RtxVideoSDK.h>)",
+    "#      include <RtxVideoSDK.h>",
+    "#      define NVIDIA_RTX_VIDEO_HAS_SDK 1",
+    "#    else",
+    "#      define NVIDIA_RTX_VIDEO_HAS_SDK 0",
+    "#    endif",
+    "#  else",
+    "#    define NVIDIA_RTX_VIDEO_HAS_SDK 0",
+    "#  endif",
+    "#else",
+    "#  define NVIDIA_RTX_VIDEO_HAS_SDK 0",
+    "#endif",
+    "",
+    "namespace nvidia_video {",
+    "",
+    "bool RtxVideoEnhancer::Initialize(const RtxVideoEnhancerDesc& desc) {",
+    "  desc_ = desc;",
+    "  capability_ = {};",
+    "  if (!desc.nativeDevice || desc.apiRoute == RtxVideoApiRoute::Unknown) {",
+    "    capability_.reason = \"RTX Video enhancer requires a native device and DX11/DX12/Vulkan/CUDA route.\";",
+    "    return false;",
+    "  }",
+    `  // ${escapeCppString(apiModeComment)}`,
+    "#if NVIDIA_RTX_VIDEO_HAS_SDK",
+    "  capability_.localHeadersEnabled = true;",
+    "#else",
+    "  capability_.localHeadersEnabled = false;",
+    "#endif",
+    "  capability_.initialized = true;",
+    "  capability_.reason = \"Enhancer initialized; runtime SDK capability query remains a host integration step.\";",
+    "  return true;",
+    "}",
+    "",
+    "void RtxVideoEnhancer::Shutdown() {",
+    "  capability_ = {};",
+    "  desc_ = {};",
+    "}",
+    "",
+    "RtxVideoEnhancementResult RtxVideoEnhancer::ValidateFrame(const RtxVideoFrame& input, const RtxVideoFrame& output, const RtxVideoEffectSettings& settings) const {",
+    "  if (!capability_.initialized) return {false, \"RTX Video enhancer is not initialized.\"};",
+    "  if (!input.nativeResource) return {false, \"Input video frame resource is required.\"};",
+    "  if (!output.nativeResource) return {false, \"Output surface ownership is required.\"};",
+    "  if (input.apiRoute == RtxVideoApiRoute::Unknown || output.apiRoute == RtxVideoApiRoute::Unknown) return {false, \"Input and output API routes must be explicit.\"};",
+    "  if (input.width == 0 || input.height == 0 || output.width == 0 || output.height == 0) return {false, \"Input and output dimensions are required.\"};",
+    "  if (input.format == RtxVideoColorFormat::Unknown) return {false, \"Input color format must be known.\"};",
+    "  if (input.bitDepth != 8 && input.bitDepth != 10) return {false, \"Only validated 8-bit or 10-bit inputs should reach the RTX Video adapter.\"};",
+    "  if (settings.sdrToHdr && settings.requireHdrOutputPath && output.colorSpace != RtxVideoColorSpace::HDR10_BT2020) return {false, \"SDR-to-HDR requires a validated HDR output path.\"};",
+    "  if (!settings.superResolution && !settings.artifactReduction && !settings.sdrToHdr) return {false, \"At least one RTX Video enhancement effect must be selected.\"};",
+    "  return {true, \"RTX Video frame contract is present; runtime support and quality validation are still required.\"};",
+    "}",
+    "",
+    "RtxVideoEnhancementResult RtxVideoEnhancer::Enhance(const RtxVideoFrame& input, const RtxVideoFrame& output, const RtxVideoEffectSettings& settings) {",
+    "  RtxVideoEnhancementResult validation = ValidateFrame(input, output, settings);",
+    "  capability_.inputFrameContractValid = validation.success;",
+    "  capability_.outputSurfaceOwned = output.nativeResource != nullptr;",
+    "  if (!validation.success) {",
+    "    capability_.reason = validation.reason;",
+    "    return validation;",
+    "  }",
+    "  // TODO(host): Query RTX Video SDK runtime support for Super Resolution, artifact reduction, and SDR-to-HDR separately.",
+    "  // TODO(host): Convert RtxVideoFrame/RtxVideoEffectSettings into exact local SDK descriptors after inspecting installed headers.",
+    "  // TODO(host): Preserve the original media playback path and disable effects when support or validation is missing.",
+    `  capability_.reason = "${escapeCppString(readiness.enhancement_working_claim_blocker)}";`,
+    "  return {false, capability_.reason};",
+    "}",
+    "",
+    "}  // namespace nvidia_video",
+    ""
+  ];
+}
+
+function rtxVideoCmakeWiring() {
+  return [
+    "# RTX Video SDK native pipeline wiring.",
+    "# Include from the native media-player/video CMakeLists.txt after reviewing generated sources.",
+    "",
+    "option(NVIDIA_RTX_VIDEO_ENABLE \"Enable generated RTX Video native enhancer adapter\" OFF)",
+    "option(NVIDIA_RTX_VIDEO_ENABLE_REAL_API \"Enable compile-time RTX Video SDK include gate\" OFF)",
+    "set(NVIDIA_RTX_VIDEO_SDK_ROOT \"\" CACHE PATH \"Path to a local, user-provided RTX Video SDK root\")",
+    "",
+    "if(NVIDIA_RTX_VIDEO_ENABLE)",
+    "  add_library(nvidia_rtx_video_enhancer",
+    "    src/nvidia_video/RtxVideoEnhancer.cpp",
+    "  )",
+    "  target_include_directories(nvidia_rtx_video_enhancer PUBLIC \"${CMAKE_CURRENT_LIST_DIR}/../src\")",
+    "  if(NVIDIA_RTX_VIDEO_ENABLE_REAL_API)",
+    "    if(NOT NVIDIA_RTX_VIDEO_SDK_ROOT)",
+    "      message(FATAL_ERROR \"Set NVIDIA_RTX_VIDEO_SDK_ROOT to a local RTX Video SDK root. This kit does not download SDKs.\")",
+    "    endif()",
+    "    set(NVIDIA_RTX_VIDEO_INCLUDE_DIR \"${NVIDIA_RTX_VIDEO_SDK_ROOT}/include\" CACHE PATH \"RTX Video SDK include directory\")",
+    "    if(NOT EXISTS \"${NVIDIA_RTX_VIDEO_INCLUDE_DIR}/RtxVideoSDK.h\")",
+    "      message(FATAL_ERROR \"RtxVideoSDK.h not found under ${NVIDIA_RTX_VIDEO_INCLUDE_DIR}\")",
+    "    endif()",
+    "    target_include_directories(nvidia_rtx_video_enhancer PUBLIC \"${NVIDIA_RTX_VIDEO_INCLUDE_DIR}\")",
+    "    target_compile_definitions(nvidia_rtx_video_enhancer PUBLIC NVIDIA_RTX_VIDEO_ENABLE_REAL_API=1)",
+    "  else()",
+    "    target_compile_definitions(nvidia_rtx_video_enhancer PUBLIC NVIDIA_RTX_VIDEO_ENABLE_REAL_API=0)",
+    "  endif()",
+    "endif()",
+    ""
+  ];
+}
+
+function rtxVideoNativePipelineNotes(readiness, validationHarness) {
+  return [
+    "# RTX Video SDK Native Pipeline Kit",
+    "",
+    `Readiness state: ${readiness.state}`,
+    `Real RTX Video API calls allowed: ${readiness.real_rtx_video_api_calls_allowed ? "yes, after reviewed local-header implementation" : "no"}`,
+    `Enhancement working claim allowed: ${readiness.enhancement_working_claim_allowed ? "yes" : "no"}`,
+    "",
+    "## Scope",
+    "",
+    "- Native media-player/video enhancement pipeline only.",
+    "- RTX Video SDK is for Super Resolution, artifact reduction, and SDR-to-HDR video enhancement.",
+    "- This is not DLSS.",
+    "- This is not Optical Flow FRUC frame interpolation.",
+    "- No browser-only native SDK claims.",
+    "- No SDK downloads, binary copies, binary packaging, or redistribution.",
+    "",
+    "## Required Frame Contract",
+    "",
+    ...readiness.required_frame_contract.map((item) => `- ${item}`),
+    "",
+    "## Contract Checks",
+    "",
+    ...Object.values(readiness.contract_checks).map((check) => `- ${check.id}: ${check.status}${check.matched_tokens?.length ? ` (${check.matched_tokens.join(", ")})` : ""}`),
+    "",
+    "## Validation Harness",
+    "",
+    ...validationHarness.required_steps.map((item) => `- ${item}`),
+    "",
+    "## Compile Commands",
+    "",
+    ...validationHarness.compile_commands.map((item) => `- \`${item}\``),
+    "",
+    "## Effects",
+    "",
+    "- Super Resolution: validate independently from artifact reduction and SDR-to-HDR.",
+    "- Artifact reduction: validate independently on compression-artifact source material.",
+    "- SDR-to-HDR: validate output/display path separately from enhancement quality.",
+    "",
+    "## Route Separation",
+    "",
+    `- RTX Video SDK: ${readiness.explicit_route_separation.rtx_video_sdk}`,
+    `- DLSS/Streamline: ${readiness.explicit_route_separation.dlss_streamline}`,
+    `- Optical Flow FRUC: ${readiness.explicit_route_separation.optical_flow_fruc}`,
+    `- Video Codec SDK: ${readiness.explicit_route_separation.video_codec_sdk}`,
+    "",
+    "## Blockers",
+    "",
+    ...(readiness.blockers.length ? readiness.blockers.map((item) => `- ${item}`) : ["- None from static inspection."]),
+    ""
+  ];
+}
+
+function rtxVideoBrowserBoundaryNotes(readiness) {
+  const recommendation = readiness.native_boundary_recommendation || {};
+  return [
+    "# RTX Video SDK Browser Boundary",
+    "",
+    "This project was detected as browser-only. Do not add native RTX Video SDK calls to browser JavaScript, extensions, WebGPU, or WebCodecs code.",
+    "",
+    "Use one of these boundaries instead:",
+    "",
+    ...((recommendation.routes || ["native companion process", "Electron/native backend", "native app/plugin architecture", "server-side NVIDIA GPU pipeline"]).map((item) => `- ${item}`)),
+    "",
+    "Required design decisions before adapter generation:",
+    "",
+    "- frame ownership and legal media access path",
+    "- IPC protocol and backpressure",
+    "- texture/frame copy count",
+    "- latency budget",
+    "- user media privacy boundary",
+    "- native process lifetime and crash recovery",
+    "",
+    "Route separation:",
+    "",
+    "- RTX Video SDK is for video enhancement.",
+    "- DLSS is for real-time rendered frames.",
+    "- Optical Flow FRUC is for frame-rate up-conversion.",
+    "",
+    "No SDK download, binary copy, upload, or browser-only native claim is performed by this plugin.",
     ""
   ];
 }
@@ -3388,6 +8094,154 @@ function unrealValidationScript() {
     "    'Do not copy NVIDIA binaries until license and production-library checks are complete.'",
     "  )",
     "} | ConvertTo-Json -Depth 12",
+    ""
+  ];
+}
+
+function unrealDlssProjectValidationScript() {
+  return [
+    "param(",
+    "  [string]$ProjectRoot = (Get-Location).Path",
+    ")",
+    "",
+    "$ErrorActionPreference = 'Stop'",
+    "$uproject = Get-ChildItem -LiteralPath $ProjectRoot -Filter '*.uproject' -File | Select-Object -First 1",
+    "if (!$uproject) { throw \"No .uproject file found in $ProjectRoot\" }",
+    "$json = Get-Content -LiteralPath $uproject.FullName -Raw | ConvertFrom-Json",
+    "$pluginDescriptors = @(Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'Plugins') -Recurse -Filter '*.uplugin' -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'NVIDIA|DLSS|Streamline|Reflex|NGX|NIS' })",
+    "$pluginEntries = @($json.Plugins | Where-Object { $_.Name -match 'NVIDIA|DLSS|Streamline|Reflex|NGX|NIS' })",
+    "$configFiles = @(Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'Config') -Filter '*.ini' -File -ErrorAction SilentlyContinue)",
+    "$configHits = @()",
+    "foreach ($file in $configFiles) {",
+    "  $hits = Select-String -LiteralPath $file.FullName -Pattern 'DLSS|Streamline|Reflex|NVIDIA|NGX|r\\.DLSS|r\\.Streamline' -SimpleMatch:$false -ErrorAction SilentlyContinue",
+    "  foreach ($hit in $hits) { $configHits += [pscustomobject]@{ file = $file.FullName; line = $hit.LineNumber; text = $hit.Line.Trim() } }",
+    "}",
+    "$logs = @(Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'Saved\\Logs') -Filter '*.log' -File -ErrorAction SilentlyContinue)",
+    "[pscustomobject]@{",
+    "  project = $uproject.FullName",
+    "  engineAssociation = $json.EngineAssociation",
+    "  pluginDescriptorCount = $pluginDescriptors.Count",
+    "  pluginEntryCount = $pluginEntries.Count",
+    "  enabledPluginEntries = @($pluginEntries | Where-Object { $_.Enabled -eq $true }).Name",
+    "  configHitCount = $configHits.Count",
+    "  logs = $logs.FullName",
+    "  boundaries = @(",
+    "    'Read-only validation helper.'",
+    "    'Does not download Unreal plugins.'",
+    "    'Does not copy NVIDIA binaries.'",
+    "    'Does not edit .uproject, .uplugin, or Config/*.ini files.'",
+    "  )",
+    "} | ConvertTo-Json -Depth 12",
+    ""
+  ];
+}
+
+function unrealDlssValidationMarkdown(report, safePatchPlan) {
+  const steps = safePatchPlan?.steps || [];
+  return [
+    "# Unreal DLSS Validation Report",
+    "",
+    `State: ${report.state}`,
+    `Project: ${report.uproject?.relative_path || "unknown"}`,
+    `Engine: ${report.engine_compatibility.engine_version || "unknown"}`,
+    `Engine compatibility: ${report.engine_compatibility.state}`,
+    `Plugin state: ${report.plugin_status.state}`,
+    `Config state: ${report.config_status.state}`,
+    "",
+    "## Blockers",
+    "",
+    ...(report.blockers.length ? report.blockers.map((item) => `- ${item}`) : ["- None observed by static validation."]),
+    "",
+    "## Packaging Risks",
+    "",
+    ...(report.packaging_risks.risks.length ? report.packaging_risks.risks.map((item) => `- ${item}`) : ["- None observed by static validation."]),
+    "",
+    "## Patch Plan",
+    "",
+    ...(steps.length ? steps.map((step, index) => `${index + 1}. ${step.step}: ${step.edit_shape}`) : ["1. Patch planning was not requested."]),
+    "",
+    "## Boundaries",
+    "",
+    "- Do not download Unreal plugins from this helper.",
+    "- Do not copy NVIDIA binaries from this helper.",
+    "- Do not edit project files without a separate explicit approval.",
+    "- Validate editor and packaged-build logs before claiming readiness.",
+    ""
+  ];
+}
+
+function unityHdrpValidationScript() {
+  return [
+    "param(",
+    "  [string]$ProjectRoot = (Get-Location).Path",
+    ")",
+    "",
+    "$ErrorActionPreference = 'Stop'",
+    "$versionFile = Join-Path $ProjectRoot 'ProjectSettings\\ProjectVersion.txt'",
+    "$manifestFile = Join-Path $ProjectRoot 'Packages\\manifest.json'",
+    "if (!(Test-Path -LiteralPath $versionFile)) { throw \"No Unity ProjectSettings/ProjectVersion.txt found in $ProjectRoot\" }",
+    "if (!(Test-Path -LiteralPath $manifestFile)) { throw \"No Unity Packages/manifest.json found in $ProjectRoot\" }",
+    "$versionText = Get-Content -LiteralPath $versionFile -Raw",
+    "$manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json",
+    "$unityVersion = if ($versionText -match 'm_EditorVersion:\\s*([^\\r\\n]+)') { $Matches[1].Trim() } else { $null }",
+    "$deps = $manifest.dependencies",
+    "$hdrp = $deps.'com.unity.render-pipelines.high-definition'",
+    "$urp = $deps.'com.unity.render-pipelines.universal'",
+    "$settings = @(Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'ProjectSettings') -File -ErrorAction SilentlyContinue)",
+    "$assets = @(Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'Assets') -Recurse -File -ErrorAction SilentlyContinue)",
+    "$hits = @()",
+    "foreach ($file in @($settings + $assets)) {",
+    "  if ($file.Extension -notmatch '\\.(asset|unity|cs|json|txt)$') { continue }",
+    "  $matches = Select-String -LiteralPath $file.FullName -Pattern 'HDRP|HDRenderPipeline|RenderPipelineAsset|DynamicResolution|DLSS|NVIDIA|Reflex|Camera' -SimpleMatch:$false -ErrorAction SilentlyContinue",
+    "  foreach ($match in $matches) { $hits += [pscustomobject]@{ file = $file.FullName; line = $match.LineNumber; text = $match.Line.Trim() } }",
+    "}",
+    "[pscustomobject]@{",
+    "  project = $ProjectRoot",
+    "  unityVersion = $unityVersion",
+    "  hdrpPackage = $hdrp",
+    "  urpPackage = $urp",
+    "  evidenceHits = $hits",
+    "  noFakeMetricsPolicy = @(",
+    "    'This helper reports static readiness only.'",
+    "    'It does not fabricate FPS, frame-time, latency, or profiler data.'",
+    "    'Runtime success requires a runnable Unity validation path and collected artifacts.'",
+    "  )",
+    "} | ConvertTo-Json -Depth 12",
+    ""
+  ];
+}
+
+function unityHdrpValidationMarkdown(report, safePatchPlan) {
+  const steps = safePatchPlan?.steps || [];
+  return [
+    "# Unity HDRP DLSS Validation Report",
+    "",
+    `State: ${report.state}`,
+    `Route: ${report.route.recommended_route}`,
+    `Unity version: ${report.unity_version.raw || "unknown"}`,
+    `HDRP package: ${report.package_status.hdrp.version || "missing"}`,
+    `URP package: ${report.package_status.urp.version || "missing"}`,
+    `Render pipeline evidence: ${report.render_pipeline_hints.state}`,
+    `NVIDIA/DLSS settings: ${report.nvidia_dlss_settings.state}`,
+    `Reflex readiness: ${report.reflex_readiness.state}`,
+    "",
+    "## Blockers",
+    "",
+    ...(report.blockers.length ? report.blockers.map((item) => `- ${item}`) : ["- None observed by static validation."]),
+    "",
+    "## Warnings",
+    "",
+    ...(report.warnings.length ? report.warnings.map((item) => `- ${item}`) : ["- None observed by static validation."]),
+    "",
+    "## Patch Plan",
+    "",
+    ...(steps.length ? steps.map((step, index) => `${index + 1}. ${step.step}: ${step.edit_shape}`) : ["1. Patch planning was not requested."]),
+    "",
+    "## No Fake Metrics",
+    "",
+    "- Do not report FPS, frame-time, latency, or profiler data unless Unity actually ran and produced artifacts.",
+    "- Static readiness is not runtime success.",
+    "- Keep ProjectSettings, Packages, scenes, assets, and scripts unchanged unless a separate implementation approval is supplied.",
     ""
   ];
 }
@@ -3737,6 +8591,14 @@ function loadRegistry() {
   }
 }
 
+function loadImplementationContracts() {
+  try {
+    return JSON.parse(readFileSync(IMPLEMENTATION_CONTRACTS_PATH, "utf8"));
+  } catch (error) {
+    throw new Error(`Failed to load implementation contracts at ${IMPLEMENTATION_CONTRACTS_PATH}: ${errorMessage(error)}`);
+  }
+}
+
 async function fetchText(url) {
   const cacheKey = `fetch:${url}`;
   const hit = getCache(cacheKey);
@@ -3782,6 +8644,9 @@ function sourceRefs(ids) {
 
 function findTechnology(value) {
   const needle = lower(value);
+  if (["nrd", "denoiser", "denoisers", "reblur", "relax", "sigma"].includes(needle)) {
+    return registry.technologies.find((tech) => tech.id === "rtx-kit");
+  }
   return registry.technologies.find(
     (tech) =>
       lower(tech.id) === needle ||

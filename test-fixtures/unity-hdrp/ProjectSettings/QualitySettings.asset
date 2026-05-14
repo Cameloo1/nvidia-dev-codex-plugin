@@ -1,0 +1,6 @@
+%YAML 1.1
+--- !u!47 &1
+QualitySettings:
+  m_QualitySettings:
+  - name: High
+    customRenderPipeline: {fileID: 11400000, guid: fixturehdrpasset, type: 2}

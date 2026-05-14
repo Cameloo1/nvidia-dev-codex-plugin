@@ -1,0 +1,5 @@
+%YAML 1.1
+--- !u!30 &1
+GraphicsSettings:
+  m_CustomRenderPipeline: {fileID: 11400000, guid: oldhdrpasset, type: 2}
+  HDRenderPipeline: true

@@ -1,0 +1,3 @@
+cmake_minimum_required(VERSION 3.20)
+project(NrdMissingMotionVectorsD3D12Renderer)
+add_executable(NrdMissingMotionVectorsD3D12Renderer src/Renderer.cpp)

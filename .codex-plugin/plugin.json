@@ -1,7 +1,7 @@
 {
   "name": "nvidia-rtx-dlss",
   "version": "1.0.0-rc.1",
-  "description": "Official-source-grounded NVIDIA RTX, DLSS, media, video, renderer, patch planning, assisted implementation, validation automation, and release-readiness tooling for Codex.",
+  "description": "Official-source-grounded NVIDIA RTX, DLSS, D3D12 Streamline, DXR, NRD, RTX Video, and Video Codec SDK/NVENC/NVDEC native pipeline kits, Unreal and Unity HDRP validation, implementation-readiness reports, media, renderer, implementation contracts, header-grounded guidance, patch planning, assisted implementation, validation automation, and release-readiness tooling for Codex.",
   "author": {
     "name": "Cameloo1",
     "email": "",
@@ -17,7 +17,9 @@
     "streamline",
     "nvenc",
     "nvdec",
+    "rtx-video",
     "nsight",
+    "nrd",
     "codex"
   ],
   "skills": "./skills/",
@@ -25,7 +27,7 @@
   "interface": {
     "displayName": "NVIDIA RTX/DLSS",
     "shortDescription": "Route, plan, scaffold, validate, and release-check NVIDIA RTX, DLSS, media, video, and renderer integrations.",
-    "longDescription": "A NVIDIA-focused Codex copilot for official-source-grounded project classification, SDK/header discovery, technology routing, compatibility reports, integration plans, validation plans, known issue lookup, licensing/download guards, repo-aware patch planning, assisted implementation scaffolds, local validation automation, registry audits, release readiness, and submission packaging for NVIDIA RTX, DLSS, Streamline, RTX Video SDK, Video Codec SDK, Optical Flow SDK, Reflex, Nsight, RTX Kit, Unreal, Unity, custom renderers, media pipelines, and web/native boundary workflows.",
+    "longDescription": "A NVIDIA-focused Codex copilot for official-source-grounded project classification, SDK/header discovery, header-grounded API guidance gates, D3D12 Streamline DLSS SR/DLAA implementation kits, D3D12 DXR ray-tracing starter kits, NRD denoiser bridge kits for ReBLUR/ReLAX/SIGMA readiness, RTX Video SDK native media enhancement pipeline kits, Video Codec SDK/NVENC/NVDEC native pipeline kits with FFmpeg/GStreamer/PyNvVideoCodec command plans, single implementation-readiness reports, Unreal DLSS/Streamline plugin validation, Unity HDRP DLSS readiness validation, technology routing, compatibility reports, strict implementation-readiness contracts, integration plans, validation plans, known issue lookup, licensing/download guards, repo-aware patch planning, assisted implementation scaffolds, local validation automation, registry audits, release readiness, and submission packaging for NVIDIA RTX, DLSS, Streamline, RTX Video SDK, Video Codec SDK, Optical Flow SDK, Reflex, Nsight, RTX Kit, Unreal, Unity, custom renderers, media pipelines, and web/native boundary workflows.",
     "developerName": "Cameloo1",
     "category": "Developer Tools",
     "capabilities": [
@@ -39,8 +41,18 @@
     "termsOfServiceURL": "https://www.nvidia.com/en-us/about-nvidia/legal-info/",
     "defaultPrompt": [
       "Classify this repo and choose the right NVIDIA route.",
+      "Validate this Unreal project for NVIDIA DLSS plugin readiness.",
+      "Validate this Unity HDRP project for DLSS readiness.",
       "Plan DLSS/Streamline with required buffers and validation.",
+      "Create a D3D12 Streamline DLSS SR/DLAA implementation kit after header grounding.",
+      "Create a D3D12 DXR ray-tracing starter kit for shadows/reflections.",
+      "Create an NRD denoiser bridge kit for ReBLUR/ReLAX/SIGMA readiness.",
+      "Create an RTX Video SDK native media enhancement pipeline kit.",
+      "Create a Video Codec SDK NVENC/NVDEC native pipeline kit with FFmpeg, GStreamer, and PyNvVideoCodec validation plans.",
+      "Create a structured NVIDIA implementation-readiness report before real patch work.",
       "Create a repo-aware NVIDIA patch plan before implementation.",
+      "Check strict NVIDIA implementation contracts before code generation.",
+      "Ground code guidance against local NVIDIA SDK headers first.",
       "Generate Phase 3 NVIDIA scaffold files after approval.",
       "Run local NVIDIA validation automation with artifact gates.",
       "Inspect local NVIDIA SDK headers before code guidance.",

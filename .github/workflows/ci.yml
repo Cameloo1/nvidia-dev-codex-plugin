@@ -43,3 +43,21 @@ jobs:
       - name: Production-readiness test
         shell: pwsh
         run: node .\scripts\tests\test-production-readiness.mjs
+
+      - name: Fixture regression tests
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-routing-and-fixtures.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-skill-usability.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-assisted-implementation.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-validation-automation.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-implementation-contracts.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-implementation-readiness-report.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-header-grounded-generation.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-unreal-dlss-validation.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-unity-hdrp-validation.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-d3d12-streamline-dlss-kit.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-d3d12-dxr-raytracing-kit.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-nrd-denoiser-bridge-kit.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-rtx-video-native-pipeline-kit.ps1
+          powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-video-codec-native-pipeline-kit.ps1

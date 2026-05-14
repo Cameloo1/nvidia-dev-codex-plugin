@@ -1,0 +1,3 @@
+cmake_minimum_required(VERSION 3.22)
+project(FrameGenerationReadyD3D12Renderer)
+add_executable(FrameGenerationReadyD3D12Renderer src/Renderer.cpp)

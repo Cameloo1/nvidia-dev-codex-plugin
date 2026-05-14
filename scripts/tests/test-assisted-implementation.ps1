@@ -9,7 +9,12 @@ try {
     @{ Workflow = 'unreal-plugin-config-validation'; Technology = 'unreal-dlss-plugin'; Goal = 'Create Unreal DLSS plugin config validation scaffold.' },
     @{ Workflow = 'cmake-sdk-wiring'; Technology = 'dlss-streamline'; Goal = 'Create CMake include and library path setup for Streamline.' },
     @{ Workflow = 'streamline-init-scaffold'; Technology = 'dlss-streamline'; Goal = 'Create Streamline initialization scaffold for a custom renderer.' },
+    @{ Workflow = 'd3d12-streamline-dlss-sr-kit'; Technology = 'dlss-streamline'; Goal = 'Create D3D12 Streamline DLSS SR and DLAA implementation kit.' },
+    @{ Workflow = 'd3d12-dxr-raytracing-starter-kit'; Technology = 'rtx-kit'; Goal = 'Create D3D12 DXR ray-tracing starter kit.' },
+    @{ Workflow = 'nrd-denoiser-bridge-kit'; Technology = 'nrd'; Goal = 'Create NRD denoiser bridge kit.' },
+    @{ Workflow = 'video-codec-native-pipeline-kit'; Technology = 'video-codec-sdk'; Goal = 'Create Video Codec SDK NVENC/NVDEC native pipeline kit.' },
     @{ Workflow = 'video-codec-sample-adaptation'; Technology = 'video-codec-sdk'; Goal = 'Create Video Codec SDK sample adaptation scaffold.' },
+    @{ Workflow = 'rtx-video-native-pipeline-kit'; Technology = 'rtx-video-sdk'; Goal = 'Create RTX Video SDK native media enhancement pipeline kit.' },
     @{ Workflow = 'rtx-video-pipeline-skeleton'; Technology = 'rtx-video-sdk'; Goal = 'Create RTX Video SDK media enhancement pipeline skeleton.' },
     @{ Workflow = 'nsight-marker-insertion'; Technology = 'nsight-aftermath'; Goal = 'Create Nsight marker insertion scaffold.' },
     @{ Workflow = 'reflex-marker-scaffold'; Technology = 'reflex'; Goal = 'Create Reflex marker scaffold for latency validation.' }

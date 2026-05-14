@@ -1,0 +1,8 @@
+interface:
+  display_name: "NVIDIA RTX/DLSS"
+  short_description: "Gate and scaffold NVIDIA integrations"
+  brand_color: "#76B900"
+  default_prompt: "Use $nvidia-rtx-dlss to create an implementation-readiness report before planning or scaffolding NVIDIA work."
+
+policy:
+  allow_implicit_invocation: true
