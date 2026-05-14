@@ -124,21 +124,21 @@ Run from the plugin root:
 ```powershell
 node --check .\scripts\nvidia-rtx-dlss-mcp.mjs
 node .\scripts\nvidia-rtx-dlss-mcp.mjs --self-test
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-routing-and-fixtures.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-skill-usability.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-assisted-implementation.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-validation-automation.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-implementation-contracts.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-implementation-readiness-report.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-header-grounded-generation.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-unreal-dlss-validation.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-unity-hdrp-validation.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-d3d12-streamline-dlss-kit.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-d3d12-dxr-raytracing-kit.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-nrd-denoiser-bridge-kit.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-rtx-video-native-pipeline-kit.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-video-codec-native-pipeline-kit.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-production-readiness.ps1
+.\scripts\tests\test-routing-and-fixtures.ps1
+.\scripts\tests\test-skill-usability.ps1
+.\scripts\tests\test-assisted-implementation.ps1
+.\scripts\tests\test-validation-automation.ps1
+.\scripts\tests\test-implementation-contracts.ps1
+.\scripts\tests\test-implementation-readiness-report.ps1
+.\scripts\tests\test-header-grounded-generation.ps1
+.\scripts\tests\test-unreal-dlss-validation.ps1
+.\scripts\tests\test-unity-hdrp-validation.ps1
+.\scripts\tests\test-d3d12-streamline-dlss-kit.ps1
+.\scripts\tests\test-d3d12-dxr-raytracing-kit.ps1
+.\scripts\tests\test-nrd-denoiser-bridge-kit.ps1
+.\scripts\tests\test-rtx-video-native-pipeline-kit.ps1
+.\scripts\tests\test-video-codec-native-pipeline-kit.ps1
+.\scripts\tests\test-production-readiness.ps1
 ```
 
 `scripts/smoke-test.mjs` performs a child-process MCP handshake. Some restricted Codex sandboxes block child spawning with `EPERM`; direct framed MCP calls remain supported.
