@@ -8,6 +8,8 @@
 ![MCP](https://img.shields.io/badge/MCP-tools-0a7ea4)
 ![NVIDIA](https://img.shields.io/badge/NVIDIA-focused-76b900)
 
+![Codex to NVIDIA integration banner](assets/codex-nvidia-readme-pic.png)
+
 **Not affiliated with, endorsed by, or sponsored by NVIDIA.** NVIDIA, RTX, DLSS, CUDA, Nsight, NVENC, NVDEC, and related names are trademarks or registered trademarks of NVIDIA Corporation.
 
 `nvidia-rtx-dlss` is a release-candidate Codex plugin for NVIDIA-focused content technology work. It helps Codex classify projects, choose the right NVIDIA SDK route, inspect local SDK headers, plan integrations, generate safe scaffolds, validate locally, and prepare release-quality reports without crossing NVIDIA licensing or privacy boundaries.
