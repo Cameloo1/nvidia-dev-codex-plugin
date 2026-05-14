@@ -143,6 +143,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\tests\test-production-readine
 
 `scripts/smoke-test.mjs` performs a child-process MCP handshake. Some restricted Codex sandboxes block child spawning with `EPERM`; direct framed MCP calls remain supported.
 
+## Contributing
+
+Contributions are welcome. This project is open to issues, docs fixes, fixtures, tests, and pull requests that make the NVIDIA routing, SDK/header grounding, implementation scaffolds, or validation workflows more accurate.
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Do not include NVIDIA SDK binaries, proprietary captures, private logs, credentials, or licensed files in issues or pull requests.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
